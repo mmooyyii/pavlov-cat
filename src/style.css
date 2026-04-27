@@ -1,0 +1,334 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #f5f4ef;
+  --surface:   #ffffff;
+  --border:    #d8d4c8;
+  --accent:    #5a7a5a;
+  --accent-lt: #8aad8a;
+  --danger:    #c0392b;
+  --success:   #27ae60;
+  --text:      #2c2c2c;
+  --muted:     #777;
+  --radius:    8px;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+#app {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* Header */
+header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+
+/* Config section */
+#config {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.config-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.config-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.config-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.toggle-group {
+  display: flex;
+  gap: 4px;
+}
+
+.toggle {
+  padding: 4px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: transparent;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.15s;
+}
+
+.toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Tabs */
+#tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+}
+
+.tab {
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s;
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 700;
+}
+
+/* Panels */
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* Quiz panel */
+.quiz-type-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+select {
+  padding: 6px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.quiz-question-area {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.question-text {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  min-height: 2rem;
+}
+
+canvas {
+  border-radius: 6px;
+  display: block;
+}
+
+.play-btn {
+  padding: 6px 18px;
+  border: 1.5px solid var(--accent);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.play-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Options */
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.option-btn {
+  padding: 12px 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.option-btn:hover:not(:disabled) {
+  border-color: var(--accent-lt);
+  background: #f0f5f0;
+}
+
+.option-btn .label {
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 20px;
+}
+
+.option-btn.correct {
+  border-color: var(--success);
+  background: #eafaf1;
+}
+
+.option-btn.wrong {
+  border-color: var(--danger);
+  background: #fdecea;
+}
+
+.option-btn:disabled { cursor: default; }
+
+/* Feedback */
+.feedback {
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  min-height: 1.5rem;
+  margin-bottom: 10px;
+}
+
+.feedback.correct { color: var(--success); }
+.feedback.wrong   { color: var(--danger); }
+
+/* Quiz footer */
+.quiz-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.score {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.btn-primary {
+  padding: 8px 22px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary:hover { background: #4a6a4a; }
+
+/* Practice panel */
+.note-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.note-btn {
+  padding: 6px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text);
+}
+
+.note-btn:hover {
+  border-color: var(--accent-lt);
+  background: #f0f5f0;
+}
+
+.note-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.practice-display {
+  display: flex;
+  gap: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.practice-info {
+  flex: 1;
+  min-width: 140px;
+}
+
+.big-note {
+  font-size: 2.8rem;
+  font-weight: 800;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.fingering-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.fingering-tag {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #f0f5f0;
+  border: 1px solid var(--accent-lt);
+  border-radius: 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+}

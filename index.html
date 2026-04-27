@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小提琴练习</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>小提琴练习</h1>
+    </header>
+
+    <section id="config">
+      <div class="config-row">
+        <div class="config-group">
+          <span class="config-label">把位</span>
+          <div class="toggle-group" id="position-toggles">
+            <button class="toggle active" data-value="1">一把位</button>
+            <button class="toggle" data-value="2">二把位</button>
+            <button class="toggle" data-value="3">三把位</button>
+          </div>
+        </div>
+        <div class="config-group">
+          <span class="config-label">弦</span>
+          <div class="toggle-group" id="string-toggles">
+            <button class="toggle active" data-value="G">G弦</button>
+            <button class="toggle active" data-value="D">D弦</button>
+            <button class="toggle active" data-value="A">A弦</button>
+            <button class="toggle active" data-value="E">E弦</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <nav id="tabs">
+      <button class="tab active" data-mode="quiz">出题模式</button>
+      <button class="tab" data-mode="practice">练习模式</button>
+    </nav>
+
+    <main>
+      <!-- Quiz Mode -->
+      <div id="quiz-panel" class="panel active">
+        <div class="quiz-type-row">
+          <span class="config-label">题型</span>
+          <select id="quiz-type">
+            <option value="note-to-fingering">音名 → 把位/弦/指</option>
+            <option value="fingering-to-note">把位/弦/指 → 音名</option>
+            <option value="staff-to-note">五线谱 → 音名</option>
+          </select>
+        </div>
+
+        <div class="quiz-question-area">
+          <div id="quiz-question-text" class="question-text"></div>
+          <canvas id="quiz-canvas" width="340" height="200"></canvas>
+          <button id="quiz-play-btn" class="play-btn" style="display:none">▶ 播放</button>
+        </div>
+
+        <div id="quiz-options" class="options-grid"></div>
+
+        <div id="quiz-feedback" class="feedback"></div>
+
+        <div class="quiz-footer">
+          <div id="quiz-score" class="score">0 / 0</div>
+          <button id="next-btn" class="btn-primary">下一题</button>
+        </div>
+      </div>
+
+      <!-- Practice Mode -->
+      <div id="practice-panel" class="panel">
+        <div id="note-palette" class="note-palette"></div>
+        <div class="practice-display">
+          <canvas id="practice-canvas" width="340" height="200"></canvas>
+          <div class="practice-info">
+            <div id="practice-note-name" class="big-note"></div>
+            <div id="practice-fingerings" class="fingering-list"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
