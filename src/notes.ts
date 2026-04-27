@@ -14,7 +14,7 @@ export interface Note {
 }
 
 function freq(semitones: number): number {
-  return 440 * Math.pow(2, (semitones - 57) / 12);
+  return 442 * Math.pow(2, (semitones - 57) / 12);
 }
 
 function staffStep(letter: 'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B', octave: number): number {

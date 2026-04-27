@@ -27,12 +27,22 @@ body {
 }
 
 /* Header */
+header {
+  margin-bottom: 16px;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--accent);
+}
+
 header h1 {
   font-size: 1.5rem;
   font-weight: 700;
-  text-align: center;
   color: var(--accent);
-  margin-bottom: 16px;
 }
 
 /* Config section */
