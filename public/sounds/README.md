@@ -4,6 +4,6 @@
 
 支持格式：`.mp3`、`.m4a`、`.ogg`、`.wav`
 
-覆盖范围：G3 A3 B3 C4 D4 E4 F4 G4 A4 B4 C5 D5 E5 F5 G5 A5 B5
+覆盖范围：G3 A3 B3 C4 D4 E4 F4 F#4 G4 A4 B4 C5 C#5 D5 E5 F5 F#5 G5 G#5 A5 B5
 
 缺失的音名会自动使用合成音代替。

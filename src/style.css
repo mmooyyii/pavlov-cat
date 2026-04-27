@@ -264,9 +264,55 @@ canvas {
 /* Practice panel */
 .note-palette {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 16px;
+}
+
+.palette-position {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.palette-pos-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.palette-grid {
+  display: grid;
+  gap: 4px;
+  align-items: center;
+}
+
+.palette-grid-str {
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+
+.palette-grid-finger {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1;
+}
+
+.palette-grid-empty {
+  height: 30px;
+}
+
+.palette-grid .note-btn {
+  padding: 4px 2px;
+  font-size: 0.78rem;
+  text-align: center;
+  width: 100%;
 }
 
 .note-btn {

@@ -48,7 +48,7 @@ export const ALL_NOTES: Note[] = [
   { name: 'E4', frequency: freq(52), staffStep: staffStep('E', 4),
     fingerings: [{ position: 1, string: 'D', finger: 1 }] },
 
-  { name: 'F4', frequency: freq(53), staffStep: staffStep('F', 4),
+  { name: 'F#4', frequency: freq(54), staffStep: staffStep('F', 4),
     fingerings: [{ position: 1, string: 'D', finger: 2 }] },
 
   { name: 'G4', frequency: freq(55), staffStep: staffStep('G', 4),
@@ -63,7 +63,7 @@ export const ALL_NOTES: Note[] = [
   { name: 'B4', frequency: freq(59), staffStep: staffStep('B', 4),
     fingerings: [{ position: 1, string: 'A', finger: 1 }] },
 
-  { name: 'C5', frequency: freq(60), staffStep: staffStep('C', 5),
+  { name: 'C#5', frequency: freq(61), staffStep: staffStep('C', 5),
     fingerings: [{ position: 1, string: 'A', finger: 2 }] },
 
   { name: 'D5', frequency: freq(62), staffStep: staffStep('D', 5),
@@ -75,10 +75,10 @@ export const ALL_NOTES: Note[] = [
       { position: 1, string: 'E', finger: 0 },
     ] },
 
-  { name: 'F5', frequency: freq(65), staffStep: staffStep('F', 5),
+  { name: 'F#5', frequency: freq(66), staffStep: staffStep('F', 5),
     fingerings: [{ position: 1, string: 'E', finger: 1 }] },
 
-  { name: 'G5', frequency: freq(67), staffStep: staffStep('G', 5),
+  { name: 'G#5', frequency: freq(68), staffStep: staffStep('G', 5),
     fingerings: [{ position: 1, string: 'E', finger: 2 }] },
 
   { name: 'A5', frequency: freq(69), staffStep: staffStep('A', 5),

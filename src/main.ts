@@ -19,7 +19,7 @@ const state = {
   },
 };
 
-type QuizType = 'note-to-fingering' | 'fingering-to-note' | 'staff-to-note';
+type QuizType = 'note-to-fingering' | 'fingering-to-note' | 'staff-to-note' | 'sound-to-note';
 
 interface QuizQuestion {
   note: Note;
@@ -180,6 +180,14 @@ function generateQuestion(type: QuizType, notes: Note[]): QuizQuestion | null {
     return { note, options, correctIndex: options.indexOf(note.name) };
   }
 
+  if (type === 'sound-to-note') {
+    // Play sound only, choose correct note name
+    const wrongNotes = pickRandom(notes.filter(n => n.name !== note.name), 3);
+    const options = [note.name, ...wrongNotes.map(n => n.name)];
+    shuffle(options);
+    return { note, options, correctIndex: options.indexOf(note.name) };
+  }
+
   return null;
 }
 
@@ -209,6 +217,12 @@ function renderQuestion(q: QuizQuestion): void {
     canvas.style.display = 'block';
     drawStaff(canvas, q.note, false);
     playBtn.style.display = 'none';
+  } else if (type === 'sound-to-note') {
+    questionEl.textContent = '听声音，选音名';
+    drawStaff(canvas, null);
+    canvas.style.display = 'none';
+    playBtn.style.display = 'inline-block';
+    playNote(q.note.name, q.note.frequency);
   }
 
   // Render option buttons
@@ -254,8 +268,8 @@ function onAnswer(chosen: number): void {
     feedbackEl.className = 'feedback wrong';
   }
 
-  // Show staff for note-to-fingering
-  if (state.quiz.type === 'note-to-fingering') {
+  // Show staff after answering
+  if (state.quiz.type === 'note-to-fingering' || state.quiz.type === 'sound-to-note') {
     const canvas = el<HTMLCanvasElement>('quiz-canvas');
     canvas.style.display = 'block';
     drawStaff(canvas, q.note, true);
@@ -263,24 +277,76 @@ function onAnswer(chosen: number): void {
 }
 
 // ── Practice Mode ───────────────────────────────────────────────────────────
+const POS_LABEL = ['', '一', '二', '三'];
+const STRING_ORDER: StringName[] = ['G', 'D', 'A', 'E'];
+
 function buildPracticeNotes(): void {
-  const notes = filteredNotes();
+  const allNotes = filteredNotes();
   const palette = el('note-palette');
-  palette.innerHTML = notes.map(n =>
-    `<button class="note-btn" data-name="${n.name}">${n.name}</button>`
-  ).join('');
+
+  const positions = [...state.positions].sort((a, b) => a - b);
+  const strings = STRING_ORDER.filter(s => state.strings.includes(s));
+
+  let html = '';
+  for (const pos of positions) {
+    // Build lookup: "finger-string" → note
+    const cell = new Map<string, Note>();
+    for (const n of allNotes) {
+      for (const f of n.fingerings) {
+        if (f.position === pos) cell.set(`${f.finger}-${f.string}`, n);
+      }
+    }
+
+    const cols = `28px ${strings.map(() => '1fr').join(' ')}`;
+    html += `<div class="palette-position">`;
+    html += `<div class="palette-pos-label">${POS_LABEL[pos]}把位</div>`;
+    html += `<div class="palette-grid" style="grid-template-columns:${cols}">`;
+
+    // Header row: corner + string labels
+    html += `<div></div>`;
+    for (const str of strings) {
+      html += `<div class="palette-grid-str">${str}</div>`;
+    }
+
+    // Finger rows: 0 → 4
+    for (let finger = 0; finger <= 4; finger++) {
+      html += `<div class="palette-grid-finger">${finger === 0 ? '○' : finger}</div>`;
+      for (const str of strings) {
+        const note = cell.get(`${finger}-${str}`);
+        if (note) {
+          html += `<button class="note-btn" data-name="${note.name}">${note.name}</button>`;
+        } else {
+          html += `<div class="palette-grid-empty"></div>`;
+        }
+      }
+    }
+
+    html += `</div></div>`;
+  }
+
+  palette.innerHTML = html;
 
   palette.querySelectorAll<HTMLButtonElement>('.note-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (btn.classList.contains('active')) return; // already selected, don't replay
-      const note = filteredNotes().find(n => n.name === btn.dataset.name) ?? null;
+      if (btn.classList.contains('active')) return;
+      const name = btn.dataset.name!;
+      const note = allNotes.find(n => n.name === name) ?? null;
       state.practice.note = note;
       palette.querySelectorAll('.note-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+      palette.querySelectorAll<HTMLButtonElement>('.note-btn').forEach(b => {
+        if (b.dataset.name === name) b.classList.add('active');
+      });
       renderPractice();
       if (note) playNote(note.name, note.frequency);
     });
   });
+
+  if (state.practice.note) {
+    const name = state.practice.note.name;
+    palette.querySelectorAll<HTMLButtonElement>('.note-btn').forEach(b => {
+      if (b.dataset.name === name) b.classList.add('active');
+    });
+  }
 }
 
 function renderPractice(): void {
