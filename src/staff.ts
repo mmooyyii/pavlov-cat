@@ -34,7 +34,7 @@ export function drawStaff(canvas: HTMLCanvasElement, note: Note | null, showNote
   ctx.font = `${LINE_SPACING * 7}px "Bravura", "Bravura Text", "FreeSerif", "Symbola", serif`;
   ctx.textBaseline = 'alphabetic';
   // The glyph's G-curl sits roughly at 65% from top of em-square
-  const clefY = bottomY - LINE_SPACING + LINE_SPACING * 7 * 0.65;
+  const clefY = bottomY - LINE_SPACING + LINE_SPACING * 7 * 0.2;
   ctx.fillText('\u{1D11E}', staffLeft - 12, clefY);
 
   if (!note) return;
@@ -57,6 +57,15 @@ export function drawStaff(canvas: HTMLCanvasElement, note: Note | null, showNote
     for (let s = 10; s <= highestEven; s += 2) {
       drawLedger(ctx, noteX, bottomY - s * STEP_PX);
     }
+  }
+
+  // Sharp accidental
+  if (note.name.includes('#')) {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = `${LINE_SPACING * 2}px "Bravura", "Bravura Text", "FreeSerif", "Symbola", serif`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillText('♯', noteX - 18, noteY);
   }
 
   // Note head (filled oval, slightly tilted)
