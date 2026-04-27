@@ -50,6 +50,22 @@
             <button class="toggle active" data-value="E">E弦</button>
           </div>
         </div>
+        <div class="config-group">
+          <span class="config-label">音频</span>
+          <button id="pick-audio-dir" class="toggle">选择本地音频文件夹</button>
+          <span id="audio-dir-name" class="config-label" style="font-style:italic"></span>
+          <details class="audio-help">
+            <summary>使用说明</summary>
+            <ul>
+              <li>用本地音频文件覆盖播放的声音</li>
+              <li>文件命名：<code>音名.扩展名</code>，如 <code>A4.mp3</code>、<code>G3.wav</code></li>
+              <li>支持格式：mp3、m4a、ogg、wav</li>
+              <li>音名范围：G3 A3 B3 C4 D4 E4 F4 F#4 G4 A4 B4 C5 C#5 D5 E5 F5 F#5 G5 G#5 A5 B5</li>
+              <li>刷新页面后需重新选择文件夹（浏览器限制）</li>
+              <li>仅支持 Chrome / Edge，Safari 不支持</li>
+            </ul>
+          </details>
+        </div>
       </div>
     </section>
 

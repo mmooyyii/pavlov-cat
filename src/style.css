@@ -388,3 +388,27 @@ canvas {
   font-weight: 600;
   color: var(--accent);
 }
+
+.audio-help {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.audio-help summary {
+  cursor: pointer;
+  color: var(--accent);
+  user-select: none;
+}
+
+.audio-help ul {
+  margin-top: 6px;
+  padding-left: 16px;
+  line-height: 1.8;
+}
+
+.audio-help code {
+  background: #eee;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.80rem;
+}

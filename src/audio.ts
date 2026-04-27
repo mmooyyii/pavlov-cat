@@ -1,9 +1,15 @@
 let actx: AudioContext | null = null;
+let dirHandle: FileSystemDirectoryHandle | null = null;
 
 function getCtx(): AudioContext {
   if (!actx) actx = new AudioContext();
   if (actx.state === 'suspended') actx.resume();
   return actx;
+}
+
+export function setAudioDirectory(handle: FileSystemDirectoryHandle): void {
+  dirHandle = handle;
+  bufferCache.clear();
 }
 
 // Cache: null = not tried yet, false = not found, AudioBuffer = loaded
@@ -13,9 +19,25 @@ async function loadBuffer(noteName: string): Promise<AudioBuffer | false> {
   if (bufferCache.has(noteName)) return bufferCache.get(noteName)!;
 
   const exts = ['mp3', 'm4a', 'ogg', 'wav'];
+
+  if (dirHandle) {
+    for (const ext of exts) {
+      try {
+        const fileHandle = await dirHandle.getFileHandle(`${noteName}.${ext}`);
+        const file = await fileHandle.getFile();
+        const arrayBuf = await file.arrayBuffer();
+        const audioBuf = await getCtx().decodeAudioData(arrayBuf);
+        bufferCache.set(noteName, audioBuf);
+        return audioBuf;
+      } catch {
+        // try next ext
+      }
+    }
+  }
+
   for (const ext of exts) {
     try {
-      const res = await fetch(`/sounds/${noteName}.${ext}`);
+      const res = await fetch(`${import.meta.env.BASE_URL}sounds/${noteName}.${ext}`);
       if (!res.ok) continue;
       const arrayBuf = await res.arrayBuffer();
       const audioBuf = await getCtx().decodeAudioData(arrayBuf);

@@ -1,5 +1,5 @@
 import { getFilteredNotes, fingeringLabel, NOTES_BY_NAME, type Note, type StringName, type Fingering } from './notes';
-import { playNote, preloadSounds } from './audio';
+import { playNote, preloadSounds, setAudioDirectory } from './audio';
 import { drawStaff } from './staff';
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -369,9 +369,23 @@ function renderPractice(): void {
     .join('');
 }
 
+// ── Audio directory picker ────────────────────────────────────────────────────
+function setupAudioDirPicker(): void {
+  el('pick-audio-dir').addEventListener('click', async () => {
+    try {
+      const handle = await (window as any).showDirectoryPicker({ mode: 'read' });
+      setAudioDirectory(handle);
+      el('audio-dir-name').textContent = handle.name;
+    } catch {
+      // user cancelled
+    }
+  });
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 setupConfig();
 setupTabs();
 setupQuiz();
+setupAudioDirPicker();
 buildPracticeNotes();
 newQuestion();
