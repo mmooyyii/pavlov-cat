@@ -1,15 +1,52 @@
 let actx: AudioContext | null = null;
 let dirHandle: FileSystemDirectoryHandle | null = null;
 
+// noteName → ext, populated by scanning the directory once
+const dirFileMap = new Map<string, string>();
+
+// HTTP manifest: noteName → ext, loaded once from sounds/manifest.json
+// null = not yet fetched, Map = loaded (may be empty if no sounds deployed)
+let httpManifest: Map<string, string> | null = null;
+
+const AUDIO_EXTS = new Set(['mp3', 'm4a', 'ogg', 'wav']);
+
 function getCtx(): AudioContext {
   if (!actx) actx = new AudioContext();
   if (actx.state === 'suspended') actx.resume();
   return actx;
 }
 
+async function scanDirectory(): Promise<void> {
+  if (!dirHandle) return;
+  dirFileMap.clear();
+  for await (const [name, entry] of (dirHandle as any).entries()) {
+    if (entry.kind !== 'file') continue;
+    const dot = name.lastIndexOf('.');
+    if (dot === -1) continue;
+    const ext = name.slice(dot + 1).toLowerCase();
+    if (AUDIO_EXTS.has(ext)) dirFileMap.set(name.slice(0, dot), ext);
+  }
+}
+
+async function ensureHttpManifest(): Promise<void> {
+  if (httpManifest !== null) return;
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}sounds/manifest.json`);
+    if (!res.ok) { httpManifest = new Map(); return; }
+    const data: Record<string, string> = await res.json();
+    httpManifest = new Map(Object.entries(data));
+  } catch {
+    httpManifest = new Map();
+  }
+}
+
+// Fire off manifest fetch immediately so it's ready before first playback
+ensureHttpManifest();
+
 export function setAudioDirectory(handle: FileSystemDirectoryHandle): void {
   dirHandle = handle;
   bufferCache.clear();
+  scanDirectory();
 }
 
 // Cache: null = not tried yet, false = not found, AudioBuffer = loaded
@@ -18,34 +55,32 @@ const bufferCache = new Map<string, AudioBuffer | false>();
 async function loadBuffer(noteName: string): Promise<AudioBuffer | false> {
   if (bufferCache.has(noteName)) return bufferCache.get(noteName)!;
 
-  const exts = ['mp3', 'm4a', 'ogg', 'wav'];
-
   if (dirHandle) {
-    for (const ext of exts) {
+    const ext = dirFileMap.get(noteName);
+    if (ext) {
       try {
         const fileHandle = await dirHandle.getFileHandle(`${noteName}.${ext}`);
         const file = await fileHandle.getFile();
-        const arrayBuf = await file.arrayBuffer();
-        const audioBuf = await getCtx().decodeAudioData(arrayBuf);
+        const audioBuf = await getCtx().decodeAudioData(await file.arrayBuffer());
         bufferCache.set(noteName, audioBuf);
         return audioBuf;
-      } catch {
-        // try next ext
-      }
+      } catch { /* fall through */ }
     }
+    bufferCache.set(noteName, false);
+    return false;
   }
 
-  for (const ext of exts) {
+  await ensureHttpManifest();
+  const ext = httpManifest!.get(noteName);
+  if (ext) {
     try {
       const res = await fetch(`${import.meta.env.BASE_URL}sounds/${noteName}.${ext}`);
-      if (!res.ok) continue;
-      const arrayBuf = await res.arrayBuffer();
-      const audioBuf = await getCtx().decodeAudioData(arrayBuf);
-      bufferCache.set(noteName, audioBuf);
-      return audioBuf;
-    } catch {
-      // try next ext or fall through to synthesis
-    }
+      if (res.ok) {
+        const audioBuf = await getCtx().decodeAudioData(await res.arrayBuffer());
+        bufferCache.set(noteName, audioBuf);
+        return audioBuf;
+      }
+    } catch { /* fall through */ }
   }
 
   bufferCache.set(noteName, false);
