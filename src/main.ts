@@ -1,12 +1,13 @@
 import { getFilteredNotes, fingeringLabel, NOTES_BY_NAME, type Note, type StringName, type Fingering } from './notes';
 import { playNote, preloadSounds, setAudioDirectory } from './audio';
 import { drawStaff } from './staff';
+import { initRealtime, realtimeOnConfigChanged, realtimeOnEnter, realtimeOnLeave } from './realtime';
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   positions: [1] as number[],
   strings: ['G', 'D', 'A', 'E'] as StringName[],
-  mode: 'quiz' as 'quiz' | 'practice',
+  mode: 'quiz' as 'quiz' | 'practice' | 'realtime',
   quiz: {
     type: 'note-to-fingering' as QuizType,
     question: null as QuizQuestion | null,
@@ -90,21 +91,26 @@ function onConfigChange(): void {
   state.quiz.question = null;
   state.quiz.answered = false;
   buildPracticeNotes();
+  realtimeOnConfigChanged();
   if (state.mode === 'quiz') newQuestion();
-  else renderPractice();
+  else if (state.mode === 'practice') renderPractice();
 }
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 function setupTabs(): void {
   document.querySelectorAll<HTMLButtonElement>('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
+      const prev = state.mode;
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      state.mode = tab.dataset.mode as 'quiz' | 'practice';
+      state.mode = tab.dataset.mode as 'quiz' | 'practice' | 'realtime';
       el('quiz-panel').classList.toggle('active', state.mode === 'quiz');
       el('practice-panel').classList.toggle('active', state.mode === 'practice');
+      el('realtime-panel').classList.toggle('active', state.mode === 'realtime');
+      if (prev === 'realtime' && state.mode !== 'realtime') realtimeOnLeave();
       if (state.mode === 'quiz') newQuestion();
-      else renderPractice();
+      else if (state.mode === 'practice') renderPractice();
+      else if (state.mode === 'realtime') realtimeOnEnter();
     });
   });
 }
@@ -389,3 +395,10 @@ setupQuiz();
 setupAudioDirPicker();
 buildPracticeNotes();
 newQuestion();
+initRealtime({ getNotes: filteredNotes });
+
+// Release mic if user navigates away from the page entirely
+window.addEventListener('beforeunload', () => realtimeOnLeave());
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') realtimeOnLeave();
+});

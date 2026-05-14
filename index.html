@@ -72,6 +72,7 @@
     <nav id="tabs">
       <button class="tab active" data-mode="quiz">出题模式</button>
       <button class="tab" data-mode="practice">练习模式</button>
+      <button class="tab" data-mode="realtime">实时反馈</button>
     </nav>
 
     <main>
@@ -101,6 +102,56 @@
           <div id="quiz-score" class="score">0 / 0</div>
           <button id="next-btn" class="btn-primary">下一题</button>
         </div>
+      </div>
+
+      <!-- Realtime Mode -->
+      <div id="realtime-panel" class="panel">
+        <div class="rt-controls">
+          <div class="rt-control">
+            <span class="config-label">BPM</span>
+            <input id="rt-bpm" type="number" min="40" max="220" step="1" value="80" />
+          </div>
+          <div class="rt-control">
+            <span class="config-label">每 N 拍重音</span>
+            <input id="rt-accent" type="number" min="1" max="12" step="1" value="4" />
+          </div>
+          <div class="rt-control">
+            <span class="config-label">音色</span>
+            <select id="rt-sound" class="rt-select">
+              <option value="wood">木质打点</option>
+              <option value="click">电子 click</option>
+              <option value="tom">低音鼓点</option>
+              <option value="hihat">Hi-hat</option>
+            </select>
+          </div>
+          <div class="rt-control">
+            <span class="config-label">时间单位</span>
+            <div class="toggle-group" id="rt-unit-toggles">
+              <button class="toggle active" data-value="beat">拍</button>
+              <button class="toggle" data-value="second">秒</button>
+            </div>
+          </div>
+          <div class="rt-control rt-actions">
+            <button id="rt-start" class="btn-primary">▶ 开始</button>
+          </div>
+        </div>
+        <div class="rt-canvas-wrap" id="rt-canvas-wrap">
+          <canvas id="realtime-canvas"></canvas>
+          <button id="rt-fullscreen" class="rt-fullscreen-btn" title="全屏 / 退出全屏" aria-label="全屏">⛶</button>
+        </div>
+        <div class="rt-footer">
+          <span id="rt-status" class="rt-status"></span>
+          <span id="rt-pitch" class="rt-pitch">— Hz</span>
+        </div>
+        <details class="audio-help">
+          <summary>使用说明</summary>
+          <ul>
+            <li>点击 <strong>开始</strong> 后浏览器会请求麦克风权限</li>
+            <li>节拍器持续播放，麦克风采集到的实时音高以橙色曲线绘出</li>
+            <li>左侧灰色横线为参考音（来自上方"把位/弦"选择）</li>
+            <li>仅在 HTTPS 或 localhost 下可使用麦克风</li>
+          </ul>
+        </details>
       </div>
 
       <!-- Practice Mode -->
