@@ -464,6 +464,11 @@ canvas {
   cursor: pointer;
 }
 
+.rt-range-sep {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .rt-canvas-wrap {
   position: relative;
   background: #1d2128;

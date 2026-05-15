@@ -1,5 +1,4 @@
 import { detectPitch, freqToMidi } from './pitch';
-import { NOTES_BY_NAME, type Note } from './notes';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -14,17 +13,38 @@ const LOOKAHEAD_S = 0.2;                // metronome scheduling lookahead
 const DEFAULT_MIDI_MIN = freqToMidi(196); // G3
 const DEFAULT_MIDI_MAX = freqToMidi(988); // B5
 
-// Range presets: low/high note names (inclusive). "all" covers G3–G5, the
-// standard 1st-position violin range; per-string ranges match the violin's
-// 1st-position fingering on that string (open string → 4th finger).
-type RangeKey = 'all' | 'G' | 'D' | 'A' | 'E';
-const RANGE_PRESETS: Record<RangeKey, { lo: string; hi: string }> = {
-  all: { lo: 'G3', hi: 'G5' },
-  G:   { lo: 'G3', hi: 'D4' },
-  D:   { lo: 'D4', hi: 'A4' },
-  A:   { lo: 'A4', hi: 'E5' },
-  E:   { lo: 'E5', hi: 'G5' },
-};
+// Reference notes: chromatic MIDI between two user-picked endpoints.
+// Picker bounds: G3 (open G, MIDI 55) to E7 (top of violin range, MIDI 100).
+const NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
+const TUNING_A4_HZ = 442;          // matches notes.ts; orchestral pitch
+const PICKER_MIN_MIDI = 55;        // G3
+const PICKER_MAX_MIDI = 100;       // E7
+const DEFAULT_LO_MIDI = 55;        // G3 — covers full 1st position
+const DEFAULT_HI_MIDI = 79;        // G5
+
+interface RefNote {
+  name: string;
+  frequency: number;
+}
+
+function midiToNoteName(midi: number): string {
+  const idx = ((midi % 12) + 12) % 12;
+  const octave = Math.floor(midi / 12) - 1;
+  return NOTE_NAMES_SHARP[idx] + octave;
+}
+
+function midiToFreq(midi: number): number {
+  return TUNING_A4_HZ * Math.pow(2, (midi - 69) / 12);
+}
+
+function refNotesForRange(loMidi: number, hiMidi: number): RefNote[] {
+  if (hiMidi < loMidi) [loMidi, hiMidi] = [hiMidi, loMidi];
+  const result: RefNote[] = [];
+  for (let m = loMidi; m <= hiMidi; m++) {
+    result.push({ name: midiToNoteName(m), frequency: midiToFreq(m) });
+  }
+  return result;
+}
 
 // ── Palette ─────────────────────────────────────────────────────────────────
 const PALETTE = {
@@ -85,8 +105,9 @@ const state = {
   rafId: 0,
   detectId: 0 as ReturnType<typeof setInterval> | 0,
 
-  range: 'all' as RangeKey,
-  rangeNotes: [] as Note[],            // cached reference notes for current range
+  loMidi: DEFAULT_LO_MIDI,
+  hiMidi: DEFAULT_HI_MIDI,
+  rangeNotes: [] as RefNote[],         // cached reference notes for [loMidi, hiMidi]
 
   els: null as null | {
     canvas: HTMLCanvasElement;
@@ -94,7 +115,8 @@ const state = {
     bpmInput: HTMLInputElement;
     accentInput: HTMLInputElement;
     soundSelect: HTMLSelectElement;
-    rangeSelect: HTMLSelectElement;
+    rangeLoSelect: HTMLSelectElement;
+    rangeHiSelect: HTMLSelectElement;
     unitToggles: NodeListOf<HTMLButtonElement>;
     startBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
@@ -102,21 +124,6 @@ const state = {
     pitchEl: HTMLElement;
   },
 };
-
-function refNotesForRange(key: RangeKey): Note[] {
-  const { lo, hi } = RANGE_PRESETS[key];
-  const loNote = NOTES_BY_NAME.get(lo);
-  const hiNote = NOTES_BY_NAME.get(hi);
-  if (!loNote || !hiNote) return [];
-  const loStep = loNote.staffStep;
-  const hiStep = hiNote.staffStep;
-  const result: Note[] = [];
-  for (const n of NOTES_BY_NAME.values()) {
-    if (n.staffStep >= loStep && n.staffStep <= hiStep) result.push(n);
-  }
-  result.sort((a, b) => a.staffStep - b.staffStep);
-  return result;
-}
 
 // ── Ring buffer ────────────────────────────────────────────────────────────
 function histPush(t: number, f: number): void {
@@ -415,20 +422,24 @@ function drawOnce(): void {
   const beatToX = (b: number): number =>
     playheadX + (b - elapsedBeats) * pxPerBeat;
 
-  // Reference lanes: one per filtered note
+  // Reference lanes: line per semitone, label per natural. Skipping sharp
+  // labels keeps wide chromatic ranges legible without losing the line.
   ctx2d.lineWidth = 1;
   ctx2d.font = `${fontMd}px system-ui, sans-serif`;
   ctx2d.textBaseline = 'middle';
   ctx2d.textAlign = 'right';
   for (const n of refNotes) {
     const y = midiToY(freqToMidi(n.frequency));
+    const isSharp = n.name.includes('#');
     ctx2d.strokeStyle = PALETTE.refLine;
     ctx2d.beginPath();
     ctx2d.moveTo(leftMargin, y);
     ctx2d.lineTo(W, y);
     ctx2d.stroke();
-    ctx2d.fillStyle = PALETTE.refLabel;
-    ctx2d.fillText(n.name, leftMargin - 4, y);
+    if (!isSharp) {
+      ctx2d.fillStyle = PALETTE.refLabel;
+      ctx2d.fillText(n.name, leftMargin - 4, y);
+    }
   }
 
   // Beat / second grid
@@ -554,7 +565,8 @@ export function initRealtime(): void {
     bpmInput: document.getElementById('rt-bpm') as HTMLInputElement,
     accentInput: document.getElementById('rt-accent') as HTMLInputElement,
     soundSelect: document.getElementById('rt-sound') as HTMLSelectElement,
-    rangeSelect: document.getElementById('rt-range') as HTMLSelectElement,
+    rangeLoSelect: document.getElementById('rt-range-lo') as HTMLSelectElement,
+    rangeHiSelect: document.getElementById('rt-range-hi') as HTMLSelectElement,
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
@@ -562,13 +574,29 @@ export function initRealtime(): void {
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
   };
 
-  state.rangeNotes = refNotesForRange(state.range);
-  state.els.rangeSelect.value = state.range;
-  state.els.rangeSelect.addEventListener('change', () => {
-    state.range = state.els!.rangeSelect.value as RangeKey;
-    state.rangeNotes = refNotesForRange(state.range);
+  const rangeOptionsHtml: string[] = [];
+  for (let m = PICKER_MIN_MIDI; m <= PICKER_MAX_MIDI; m++) {
+    rangeOptionsHtml.push(`<option value="${m}">${midiToNoteName(m)}</option>`);
+  }
+  state.els.rangeLoSelect.innerHTML = rangeOptionsHtml.join('');
+  state.els.rangeHiSelect.innerHTML = rangeOptionsHtml.join('');
+  state.els.rangeLoSelect.value = String(state.loMidi);
+  state.els.rangeHiSelect.value = String(state.hiMidi);
+  state.rangeNotes = refNotesForRange(state.loMidi, state.hiMidi);
+
+  const onRangeChange = (): void => {
+    let lo = Number(state.els!.rangeLoSelect.value);
+    let hi = Number(state.els!.rangeHiSelect.value);
+    if (lo > hi) [lo, hi] = [hi, lo];   // swap if user inverted them
+    state.loMidi = lo;
+    state.hiMidi = hi;
+    state.els!.rangeLoSelect.value = String(lo);
+    state.els!.rangeHiSelect.value = String(hi);
+    state.rangeNotes = refNotesForRange(lo, hi);
     drawOnce();
-  });
+  };
+  state.els.rangeLoSelect.addEventListener('change', onRangeChange);
+  state.els.rangeHiSelect.addEventListener('change', onRangeChange);
 
   state.els.bpmInput.value = String(state.bpm);
   state.els.bpmInput.addEventListener('change', () => {
