@@ -108,6 +108,16 @@
       <div id="realtime-panel" class="panel">
         <div class="rt-controls">
           <div class="rt-control">
+            <span class="config-label">音域</span>
+            <select id="rt-range" class="rt-select">
+              <option value="all">全部 (G3–G5)</option>
+              <option value="G">G弦 (G3–D4)</option>
+              <option value="D">D弦 (D4–A4)</option>
+              <option value="A">A弦 (A4–E5)</option>
+              <option value="E">E弦 (E5–G5)</option>
+            </select>
+          </div>
+          <div class="rt-control">
             <span class="config-label">BPM</span>
             <input id="rt-bpm" type="number" min="40" max="220" step="1" value="80" />
           </div>
@@ -147,8 +157,9 @@
           <summary>使用说明</summary>
           <ul>
             <li>点击 <strong>开始</strong> 后浏览器会请求麦克风权限</li>
-            <li>节拍器持续播放，麦克风采集到的实时音高以橙色曲线绘出</li>
-            <li>左侧灰色横线为参考音（来自上方"把位/弦"选择）</li>
+            <li>节拍器持续播放，麦克风采集到的实时音高以彩色点绘出</li>
+            <li>左侧横线为参考音，由"音域"下拉框控制</li>
+            <li>颜色：绿 &lt;10¢，黄 &lt;25¢，红 &ge;25¢（相对最近参考音）</li>
             <li>仅在 HTTPS 或 localhost 下可使用麦克风</li>
           </ul>
         </details>

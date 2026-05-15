@@ -54,6 +54,10 @@ header h1 {
   margin-bottom: 12px;
 }
 
+/* The top config (把位/弦/音频) drives quiz + practice only; the realtime
+   panel has its own range selector and doesn't read from it. */
+body.mode-realtime #config { display: none; }
+
 .config-row {
   display: flex;
   flex-wrap: wrap;

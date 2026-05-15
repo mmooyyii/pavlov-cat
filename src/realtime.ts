@@ -1,5 +1,5 @@
 import { detectPitch, freqToMidi } from './pitch';
-import type { Note } from './notes';
+import { NOTES_BY_NAME, type Note } from './notes';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -10,9 +10,21 @@ const VISIBLE_BEATS = 8;                // total beats visible across canvas
 const PLAYHEAD_RATIO = 0.25;            // playhead x-position (fraction of width)
 const LOOKAHEAD_S = 0.2;                // metronome scheduling lookahead
 
-// Fallback pitch range when no notes are selected (covers most of the violin)
+// Fallback pitch range when the selected range yields nothing.
 const DEFAULT_MIDI_MIN = freqToMidi(196); // G3
 const DEFAULT_MIDI_MAX = freqToMidi(988); // B5
+
+// Range presets: low/high note names (inclusive). "all" covers G3–G5, the
+// standard 1st-position violin range; per-string ranges match the violin's
+// 1st-position fingering on that string (open string → 4th finger).
+type RangeKey = 'all' | 'G' | 'D' | 'A' | 'E';
+const RANGE_PRESETS: Record<RangeKey, { lo: string; hi: string }> = {
+  all: { lo: 'G3', hi: 'G5' },
+  G:   { lo: 'G3', hi: 'D4' },
+  D:   { lo: 'D4', hi: 'A4' },
+  A:   { lo: 'A4', hi: 'E5' },
+  E:   { lo: 'E5', hi: 'G5' },
+};
 
 // ── Palette ─────────────────────────────────────────────────────────────────
 const PALETTE = {
@@ -36,10 +48,6 @@ const CENTS_MED = 25;
 // ── Types ───────────────────────────────────────────────────────────────────
 type TimeUnit = 'beat' | 'second';
 type SoundKind = 'wood' | 'click' | 'tom' | 'hihat';
-
-interface Hooks {
-  getNotes: () => Note[];
-}
 
 // ── State ───────────────────────────────────────────────────────────────────
 const state = {
@@ -77,13 +85,16 @@ const state = {
   rafId: 0,
   detectId: 0 as ReturnType<typeof setInterval> | 0,
 
-  hooks: null as Hooks | null,
+  range: 'all' as RangeKey,
+  rangeNotes: [] as Note[],            // cached reference notes for current range
+
   els: null as null | {
     canvas: HTMLCanvasElement;
     wrap: HTMLElement;
     bpmInput: HTMLInputElement;
     accentInput: HTMLInputElement;
     soundSelect: HTMLSelectElement;
+    rangeSelect: HTMLSelectElement;
     unitToggles: NodeListOf<HTMLButtonElement>;
     startBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
@@ -91,6 +102,21 @@ const state = {
     pitchEl: HTMLElement;
   },
 };
+
+function refNotesForRange(key: RangeKey): Note[] {
+  const { lo, hi } = RANGE_PRESETS[key];
+  const loNote = NOTES_BY_NAME.get(lo);
+  const hiNote = NOTES_BY_NAME.get(hi);
+  if (!loNote || !hiNote) return [];
+  const loStep = loNote.staffStep;
+  const hiStep = hiNote.staffStep;
+  const result: Note[] = [];
+  for (const n of NOTES_BY_NAME.values()) {
+    if (n.staffStep >= loStep && n.staffStep <= hiStep) result.push(n);
+  }
+  result.sort((a, b) => a.staffStep - b.staffStep);
+  return result;
+}
 
 // ── Ring buffer ────────────────────────────────────────────────────────────
 function histPush(t: number, f: number): void {
@@ -355,8 +381,8 @@ function drawOnce(): void {
     ? (state.ctx.currentTime - state.startTime) / secsPerBeat
     : state.frozenElapsedBeats + state.viewOffsetBeats;
 
-  // Pitch range from filtered notes (reference lanes), with padding.
-  const refNotes = state.hooks?.getNotes() ?? [];
+  // Pitch range from the selected preset (reference lanes), with padding.
+  const refNotes = state.rangeNotes;
   let mMin = Infinity, mMax = -Infinity;
   for (const n of refNotes) {
     const m = freqToMidi(n.frequency);
@@ -521,21 +547,28 @@ function updatePitchReadout(freq: number): void {
 }
 
 // ── Public init ────────────────────────────────────────────────────────────
-export function initRealtime(hooks: Hooks): void {
-  state.hooks = hooks;
-
+export function initRealtime(): void {
   state.els = {
     canvas: document.getElementById('realtime-canvas') as HTMLCanvasElement,
     wrap: document.getElementById('rt-canvas-wrap') as HTMLElement,
     bpmInput: document.getElementById('rt-bpm') as HTMLInputElement,
     accentInput: document.getElementById('rt-accent') as HTMLInputElement,
     soundSelect: document.getElementById('rt-sound') as HTMLSelectElement,
+    rangeSelect: document.getElementById('rt-range') as HTMLSelectElement,
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
   };
+
+  state.rangeNotes = refNotesForRange(state.range);
+  state.els.rangeSelect.value = state.range;
+  state.els.rangeSelect.addEventListener('change', () => {
+    state.range = state.els!.rangeSelect.value as RangeKey;
+    state.rangeNotes = refNotesForRange(state.range);
+    drawOnce();
+  });
 
   state.els.bpmInput.value = String(state.bpm);
   state.els.bpmInput.addEventListener('change', () => {
@@ -654,11 +687,6 @@ function resizeCanvas(): void {
     c.width = w;
     c.height = h;
   }
-  drawOnce();
-}
-
-// Called by main.ts on config change (filter notes changed)
-export function realtimeOnConfigChanged(): void {
   drawOnce();
 }
 

@@ -1,7 +1,7 @@
 import { getFilteredNotes, fingeringLabel, NOTES_BY_NAME, type Note, type StringName, type Fingering } from './notes';
 import { playNote, preloadSounds, setAudioDirectory } from './audio';
 import { drawStaff } from './staff';
-import { initRealtime, realtimeOnConfigChanged, realtimeOnEnter, realtimeOnLeave } from './realtime';
+import { initRealtime, realtimeOnEnter, realtimeOnLeave } from './realtime';
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
@@ -91,7 +91,6 @@ function onConfigChange(): void {
   state.quiz.question = null;
   state.quiz.answered = false;
   buildPracticeNotes();
-  realtimeOnConfigChanged();
   if (state.mode === 'quiz') newQuestion();
   else if (state.mode === 'practice') renderPractice();
 }
@@ -107,6 +106,7 @@ function setupTabs(): void {
       el('quiz-panel').classList.toggle('active', state.mode === 'quiz');
       el('practice-panel').classList.toggle('active', state.mode === 'practice');
       el('realtime-panel').classList.toggle('active', state.mode === 'realtime');
+      document.body.classList.toggle('mode-realtime', state.mode === 'realtime');
       if (prev === 'realtime' && state.mode !== 'realtime') realtimeOnLeave();
       if (state.mode === 'quiz') newQuestion();
       else if (state.mode === 'practice') renderPractice();
@@ -395,7 +395,7 @@ setupQuiz();
 setupAudioDirPicker();
 buildPracticeNotes();
 newQuestion();
-initRealtime({ getNotes: filteredNotes });
+initRealtime();
 
 // Release mic if user navigates away from the page entirely
 window.addEventListener('beforeunload', () => realtimeOnLeave());
