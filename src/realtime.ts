@@ -459,31 +459,24 @@ function drawOnce(): void {
     return 2;
   };
 
-  let prevX = 0, prevY = 0;
-  let hasPrev = false;
+  const dotR = 1.8 * scale;
   histForEach((ts, f) => {
-    if (ts < visibleStartT || ts > visibleEndT) { hasPrev = false; return; }
-    if (f <= 0) { hasPrev = false; return; }
+    if (ts < visibleStartT || ts > visibleEndT) return;
+    if (f <= 0) return;
     const m = freqToMidi(f);
-    if (m < mMin || m > mMax) { hasPrev = false; return; }
+    if (m < mMin || m > mMax) return;
     const beat = (ts - state.startTime) / secsPerBeat;
     const x = beatToX(beat);
-    if (x < leftMargin || x > W) { hasPrev = false; return; }
+    if (x < leftMargin || x > W) return;
     const y = midiToY(m);
-    if (hasPrev) {
-      const p = buckets[pickBucket(m)].path;
-      p.moveTo(prevX, prevY);
-      p.lineTo(x, y);
-    }
-    prevX = x; prevY = y; hasPrev = true;
+    const p = buckets[pickBucket(m)].path;
+    p.moveTo(x + dotR, y);
+    p.arc(x, y, dotR, 0, Math.PI * 2);
   });
 
-  ctx2d.lineWidth = 2 * scale;
-  ctx2d.lineCap = 'round';
-  ctx2d.lineJoin = 'round';
   for (const b of buckets) {
-    ctx2d.strokeStyle = b.color;
-    ctx2d.stroke(b.path);
+    ctx2d.fillStyle = b.color;
+    ctx2d.fill(b.path);
   }
 
   // Playhead with a soft cyan glow.
