@@ -122,6 +122,10 @@
             <input id="rt-accent" type="number" min="1" max="12" step="1" value="4" />
           </div>
           <div class="rt-control">
+            <span class="config-label">显示拍数</span>
+            <input id="rt-visible-beats" type="number" min="4" max="32" step="1" value="16" />
+          </div>
+          <div class="rt-control">
             <span class="config-label">音色</span>
             <select id="rt-sound" class="rt-select">
               <option value="wood">木质打点</option>
@@ -129,6 +133,20 @@
               <option value="tom">低音鼓点</option>
               <option value="hihat">Hi-hat</option>
             </select>
+          </div>
+          <div class="rt-control">
+            <span class="config-label">节拍器</span>
+            <div class="toggle-group" id="rt-metronome-toggles">
+              <button class="toggle active" data-value="on">开</button>
+              <button class="toggle" data-value="off">关</button>
+            </div>
+          </div>
+          <div class="rt-control">
+            <span class="config-label">音准判定</span>
+            <div class="toggle-group" id="rt-judge-toggles">
+              <button class="toggle active" data-value="on">开</button>
+              <button class="toggle" data-value="off">关</button>
+            </div>
           </div>
           <div class="rt-control">
             <span class="config-label">时间单位</span>
@@ -155,7 +173,7 @@
             <li>点击 <strong>开始</strong> 后浏览器会请求麦克风权限</li>
             <li>节拍器持续播放，麦克风采集到的实时音高以彩色点绘出</li>
             <li>左侧横线为参考音，由"音域"下拉框控制</li>
-            <li>颜色：绿 &lt;10¢，黄 &lt;25¢，红 &ge;25¢（相对最近参考音）</li>
+            <li>音准判定开启时：绿 ±2Hz 以内，红 其他（相对最近参考音）；关闭时统一为中性色</li>
             <li>仅在 HTTPS 或 localhost 下可使用麦克风</li>
           </ul>
         </details>

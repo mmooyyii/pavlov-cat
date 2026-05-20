@@ -5,7 +5,9 @@ const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz
 const DETECT_INTERVAL_MS = 16;          // ~62.5Hz pitch detection (windows overlap ~63%)
 const HISTORY_DURATION_S = 3600;        // 1 hour of pitch trajectory
 const HISTORY_SIZE = Math.ceil((HISTORY_DURATION_S * 1000) / DETECT_INTERVAL_MS); // ~225k entries → ~1.7MB total
-const VISIBLE_BEATS = 8;                // total beats visible across canvas
+const DEFAULT_VISIBLE_BEATS = 16;       // default beats across canvas (higher = slower scroll)
+const MIN_VISIBLE_BEATS = 4;
+const MAX_VISIBLE_BEATS = 32;
 const PLAYHEAD_RATIO = 0.25;            // playhead x-position (fraction of width)
 const LOOKAHEAD_S = 0.2;                // metronome scheduling lookahead
 
@@ -62,8 +64,7 @@ const PALETTE = {
   traceNoRef:   '#ff9a3c',  // when no reference notes are selected
   playhead:     '#5dd4d4',  // cyan-teal
 } as const;
-const CENTS_GOOD = 10;
-const CENTS_MED = 25;
+const HZ_TOLERANCE_GOOD = 2;   // within ±2Hz of nearest reference → green
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type TimeUnit = 'beat' | 'second';
@@ -83,6 +84,9 @@ const state = {
   bpm: 80,
   timeUnit: 'beat' as TimeUnit,
   accentEvery: 4,
+  metronomeOn: true,
+  pitchJudge: true,                     // when off, all dots use neutral color
+  visibleBeats: DEFAULT_VISIBLE_BEATS,
   soundKind: 'wood' as SoundKind,
   noiseBuffer: null as AudioBuffer | null,    // shared white-noise source for hihat
 
@@ -114,9 +118,12 @@ const state = {
     wrap: HTMLElement;
     bpmInput: HTMLInputElement;
     accentInput: HTMLInputElement;
+    visibleBeatsInput: HTMLInputElement;
     soundSelect: HTMLSelectElement;
     rangeLoSelect: HTMLSelectElement;
     rangeHiSelect: HTMLSelectElement;
+    metronomeToggles: NodeListOf<HTMLButtonElement>;
+    judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
     startBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
@@ -160,9 +167,11 @@ function scheduleMetronome(): void {
   const ctx = state.ctx;
   const secsPerBeat = 60 / state.bpm;
   while (state.nextTickTime < ctx.currentTime + LOOKAHEAD_S) {
-    const isAccent = state.nextTickBeat % state.accentEvery === 0;
-    if (isAccent) playBell(ctx, state.nextTickTime);
-    else playSound(ctx, state.nextTickTime, state.soundKind);
+    if (state.metronomeOn) {
+      const isAccent = state.nextTickBeat % state.accentEvery === 0;
+      if (isAccent) playBell(ctx, state.nextTickTime);
+      else playSound(ctx, state.nextTickTime, state.soundKind);
+    }
     state.nextTickTime += secsPerBeat;
     state.nextTickBeat++;
   }
@@ -410,7 +419,7 @@ function drawOnce(): void {
   const fontMd = Math.round(13 * scale);
   const leftMargin = Math.round(44 * scale);
   const playheadX = leftMargin + (W - leftMargin) * PLAYHEAD_RATIO;
-  const pxPerBeat = (W - playheadX - 10 * scale) / (VISIBLE_BEATS - VISIBLE_BEATS * PLAYHEAD_RATIO);
+  const pxPerBeat = (W - playheadX - 10 * scale) / (state.visibleBeats - state.visibleBeats * PLAYHEAD_RATIO);
   state.lastPxPerBeat = pxPerBeat;
 
   const topY = Math.round(24 * scale);
@@ -443,33 +452,62 @@ function drawOnce(): void {
   }
 
   // Beat / second grid
-  const firstBeat = Math.floor(elapsedBeats - VISIBLE_BEATS * PLAYHEAD_RATIO);
-  const lastBeat = Math.ceil(elapsedBeats + VISIBLE_BEATS * (1 - PLAYHEAD_RATIO));
   ctx2d.font = `${fontSm}px system-ui, sans-serif`;
   ctx2d.textAlign = 'left';
   ctx2d.textBaseline = 'top';
-  for (let b = firstBeat; b <= lastBeat; b++) {
-    const x = beatToX(b);
-    if (x < leftMargin || x > W) continue;
-    const isAccent = b >= 0 && b % state.accentEvery === 0;
-    ctx2d.strokeStyle = isAccent ? PALETTE.gridAccent : PALETTE.gridRegular;
-    ctx2d.lineWidth = isAccent ? 1.2 * scale : 1;
-    ctx2d.beginPath();
-    ctx2d.moveTo(x, topY);
-    ctx2d.lineTo(x, bottomY);
-    ctx2d.stroke();
-    ctx2d.fillStyle = isAccent ? PALETTE.labelAccent : PALETTE.labelRegular;
-    const label = state.timeUnit === 'beat'
-      ? `${b + 1}`
-      : `${(b * secsPerBeat).toFixed(2)}s`;
-    ctx2d.fillText(label, x + 2, bottomY + 4);
+  if (state.timeUnit === 'beat') {
+    const firstBeat = Math.floor(elapsedBeats - state.visibleBeats * PLAYHEAD_RATIO);
+    const lastBeat = Math.ceil(elapsedBeats + state.visibleBeats * (1 - PLAYHEAD_RATIO));
+    for (let b = firstBeat; b <= lastBeat; b++) {
+      const x = beatToX(b);
+      if (x < leftMargin || x > W) continue;
+      const isAccent = b >= 0 && b % state.accentEvery === 0;
+      ctx2d.strokeStyle = isAccent ? PALETTE.gridAccent : PALETTE.gridRegular;
+      ctx2d.lineWidth = isAccent ? 1.2 * scale : 1;
+      ctx2d.beginPath();
+      ctx2d.moveTo(x, topY);
+      ctx2d.lineTo(x, bottomY);
+      ctx2d.stroke();
+      ctx2d.fillStyle = isAccent ? PALETTE.labelAccent : PALETTE.labelRegular;
+      ctx2d.fillText(`${b + 1}`, x + 2, bottomY + 4);
+    }
+  } else {
+    // Adaptive grid step in seconds: pick the smallest ladder value that keeps
+    // each label at least MIN_LABEL_PX apart, independent of BPM/visibleBeats.
+    const pxPerSec = pxPerBeat / secsPerBeat;
+    const MIN_LABEL_PX = 60 * scale;
+    const STEP_LADDER = [0.5, 1, 2, 5, 10, 30, 60];
+    let secStep = STEP_LADDER[STEP_LADDER.length - 1];
+    for (const s of STEP_LADDER) {
+      if (s * pxPerSec >= MIN_LABEL_PX) { secStep = s; break; }
+    }
+    const elapsedSec = elapsedBeats * secsPerBeat;
+    const visSpanLeft = state.visibleBeats * PLAYHEAD_RATIO * secsPerBeat;
+    const visSpanRight = state.visibleBeats * (1 - PLAYHEAD_RATIO) * secsPerBeat;
+    const firstStep = Math.floor((elapsedSec - visSpanLeft) / secStep);
+    const lastStep = Math.ceil((elapsedSec + visSpanRight) / secStep);
+    for (let s = firstStep; s <= lastStep; s++) {
+      const t = s * secStep;
+      const x = beatToX(t / secsPerBeat);
+      if (x < leftMargin || x > W) continue;
+      const isAccent = s >= 0 && s % 2 === 0;
+      ctx2d.strokeStyle = isAccent ? PALETTE.gridAccent : PALETTE.gridRegular;
+      ctx2d.lineWidth = isAccent ? 1.2 * scale : 1;
+      ctx2d.beginPath();
+      ctx2d.moveTo(x, topY);
+      ctx2d.lineTo(x, bottomY);
+      ctx2d.stroke();
+      ctx2d.fillStyle = isAccent ? PALETTE.labelAccent : PALETTE.labelRegular;
+      const label = secStep < 1 ? `${t.toFixed(1)}s` : `${Math.round(t)}s`;
+      ctx2d.fillText(label, x + 2, bottomY + 4);
+    }
   }
 
   // Pitch trace. With up to ~109k history entries we keep this hot loop cheap
   // by rejecting on the visible-time window before any log/midi math, and by
   // batching segments into per-color Path2D buckets (one stroke per color).
-  const visibleStartT = state.startTime + (elapsedBeats - VISIBLE_BEATS * PLAYHEAD_RATIO) * secsPerBeat;
-  const visibleEndT   = state.startTime + (elapsedBeats + VISIBLE_BEATS * (1 - PLAYHEAD_RATIO)) * secsPerBeat;
+  const visibleStartT = state.startTime + (elapsedBeats - state.visibleBeats * PLAYHEAD_RATIO) * secsPerBeat;
+  const visibleEndT   = state.startTime + (elapsedBeats + state.visibleBeats * (1 - PLAYHEAD_RATIO)) * secsPerBeat;
 
   // Tri-color buckets when reference notes are available; otherwise a single
   // fallback bucket. Order matches pickBucket() return values.
@@ -479,21 +517,18 @@ function drawOnce(): void {
     { color: PALETTE.traceBad,   path: new Path2D() },
     { color: PALETTE.traceNoRef, path: new Path2D() },
   ];
-  const refMidis: number[] = [];
-  for (const n of refNotes) refMidis.push(freqToMidi(n.frequency));
-  const hasRef = refMidis.length > 0;
+  const refFreqs: number[] = [];
+  for (const n of refNotes) refFreqs.push(n.frequency);
+  const hasRef = refFreqs.length > 0;
 
-  const pickBucket = (m: number): number => {
-    if (!hasRef) return 3;
+  const pickBucket = (f: number): number => {
+    if (!hasRef || !state.pitchJudge) return 3;
     let best = Infinity;
-    for (let i = 0; i < refMidis.length; i++) {
-      const d = Math.abs(m - refMidis[i]);
+    for (let i = 0; i < refFreqs.length; i++) {
+      const d = Math.abs(f - refFreqs[i]);
       if (d < best) best = d;
     }
-    const cents = best * 100;
-    if (cents < CENTS_GOOD) return 0;
-    if (cents < CENTS_MED) return 1;
-    return 2;
+    return best <= HZ_TOLERANCE_GOOD ? 0 : 2;
   };
 
   const dotR = 1.8 * scale;
@@ -506,7 +541,7 @@ function drawOnce(): void {
     const x = beatToX(beat);
     if (x < leftMargin || x > W) return;
     const y = midiToY(m);
-    const p = buckets[pickBucket(m)].path;
+    const p = buckets[pickBucket(f)].path;
     p.moveTo(x + dotR, y);
     p.arc(x, y, dotR, 0, Math.PI * 2);
   });
@@ -564,9 +599,12 @@ export function initRealtime(): void {
     wrap: document.getElementById('rt-canvas-wrap') as HTMLElement,
     bpmInput: document.getElementById('rt-bpm') as HTMLInputElement,
     accentInput: document.getElementById('rt-accent') as HTMLInputElement,
+    visibleBeatsInput: document.getElementById('rt-visible-beats') as HTMLInputElement,
     soundSelect: document.getElementById('rt-sound') as HTMLSelectElement,
     rangeLoSelect: document.getElementById('rt-range-lo') as HTMLSelectElement,
     rangeHiSelect: document.getElementById('rt-range-hi') as HTMLSelectElement,
+    metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
+    judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
@@ -614,9 +652,35 @@ export function initRealtime(): void {
     drawOnce();
   });
 
+  state.els.visibleBeatsInput.value = String(state.visibleBeats);
+  state.els.visibleBeatsInput.addEventListener('change', () => {
+    const raw = Math.floor(Number(state.els!.visibleBeatsInput.value)) || DEFAULT_VISIBLE_BEATS;
+    const v = Math.max(MIN_VISIBLE_BEATS, Math.min(MAX_VISIBLE_BEATS, raw));
+    state.visibleBeats = v;
+    state.els!.visibleBeatsInput.value = String(v);
+    drawOnce();
+  });
+
   state.els.soundSelect.value = state.soundKind;
   state.els.soundSelect.addEventListener('change', () => {
     state.soundKind = state.els!.soundSelect.value as SoundKind;
+  });
+
+  state.els.metronomeToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === (state.metronomeOn ? 'on' : 'off'));
+    btn.addEventListener('click', () => {
+      state.metronomeOn = btn.dataset.value === 'on';
+      state.els!.metronomeToggles.forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  state.els.judgeToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === (state.pitchJudge ? 'on' : 'off'));
+    btn.addEventListener('click', () => {
+      state.pitchJudge = btn.dataset.value === 'on';
+      state.els!.judgeToggles.forEach(b => b.classList.toggle('active', b === btn));
+      drawOnce();
+    });
   });
 
   state.els.unitToggles.forEach(btn => {
