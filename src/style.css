@@ -275,6 +275,23 @@ canvas {
 
 .btn-primary:hover { background: #4a6a4a; }
 
+.btn-secondary {
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--muted);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.btn-secondary:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
 /* Practice panel */
 .note-palette {
   display: flex;

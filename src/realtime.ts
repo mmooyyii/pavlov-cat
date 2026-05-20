@@ -58,13 +58,14 @@ const PALETTE = {
   gridRegular:  '#22272d',  // cool dark gray
   labelAccent:  '#d4a96a',  // warm gold
   labelRegular: '#7a8590',
-  traceGood:    '#5dc97a',  // <10 cents off
-  traceMed:     '#e6b450',  // <25 cents off
-  traceBad:     '#ff7a5c',  // >=25 cents off
+  traceGood:    '#5dc97a',  // ≤6 cents — trained-ear threshold
+  traceMed:     '#e6b450',  // ≤20 cents — average listener notices "a bit off"
+  traceBad:     '#ff7a5c',  // >20 cents
   traceNoRef:   '#ff9a3c',  // when no reference notes are selected
   playhead:     '#5dd4d4',  // cyan-teal
 } as const;
-const HZ_TOLERANCE_GOOD = 2;   // within ±2Hz of nearest reference → green
+const CENTS_TOLERANCE_GOOD = 6;   // ≤6¢ → green (trained musician threshold)
+const CENTS_TOLERANCE_MED  = 15;  // ≤20¢ → yellow (perceptible to average listener)
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type TimeUnit = 'beat' | 'second';
@@ -126,6 +127,7 @@ const state = {
     judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
     startBtn: HTMLButtonElement;
+    clearBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
     pitchEl: HTMLElement;
@@ -332,7 +334,66 @@ async function start(): Promise<void> {
   drawLoop();
 }
 
-async function stop(): Promise<void> {
+// Pause: keep mic + ctx + pitch history so resume() can continue from here.
+// Suspending the AudioContext freezes its currentTime, so on resume the
+// startTime math doesn't need to compensate for paused wall-clock.
+async function pause(): Promise<void> {
+  if (!state.running || !state.ctx) return;
+  state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
+  state.running = false;
+
+  if (state.detectId) { clearInterval(state.detectId as ReturnType<typeof setInterval>); state.detectId = 0; }
+  if (state.rafId) { cancelAnimationFrame(state.rafId); state.rafId = 0; }
+
+  try { await state.ctx.suspend(); } catch { /* */ }
+
+  setStatus('已暂停');
+  updatePitchReadout(-1);
+  updateStartBtn();
+  drawOnce();
+}
+
+async function resume(): Promise<void> {
+  if (state.running || !state.ctx) return;
+  try { await state.ctx.resume(); } catch { /* */ }
+
+  const spb = 60 / state.bpm;
+  state.startTime = state.ctx.currentTime - state.frozenElapsedBeats * spb;
+  state.viewOffsetBeats = 0;
+  // Next tick = first whole beat after where we paused, but never in the past
+  // (otherwise scheduleMetronome would burst-fire all missed beats at once).
+  const nextBeat = Math.max(0, Math.floor(state.frozenElapsedBeats) + 1);
+  state.nextTickBeat = nextBeat;
+  state.nextTickTime = state.startTime + nextBeat * spb;
+  if (state.nextTickTime < state.ctx.currentTime + 0.05) {
+    state.nextTickTime = state.ctx.currentTime + 0.05;
+  }
+  state.running = true;
+
+  state.detectId = setInterval(detectStep, DETECT_INTERVAL_MS);
+  setStatus('');
+  updateStartBtn();
+  drawLoop();
+}
+
+// Wipe the pitch trail and rewind the timeline to beat 0. Keeps the session
+// alive (mic/ctx untouched) so it works while running, paused, or idle.
+function clearData(): void {
+  histClear();
+  state.frozenElapsedBeats = 0;
+  state.viewOffsetBeats = 0;
+  if (state.ctx) {
+    const spb = 60 / state.bpm;
+    state.startTime = state.ctx.currentTime;
+    state.nextTickBeat = 0;
+    state.nextTickTime = state.startTime + spb;
+  }
+  updatePitchReadout(-1);
+  drawOnce();
+}
+
+// Full release of mic/audio resources. Used when leaving the panel.
+async function teardown(): Promise<void> {
   if (!state.running && !state.ctx) return;
   if (state.ctx) {
     state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
@@ -523,12 +584,14 @@ function drawOnce(): void {
 
   const pickBucket = (f: number): number => {
     if (!hasRef || !state.pitchJudge) return 3;
-    let best = Infinity;
+    let bestCents = Infinity;
     for (let i = 0; i < refFreqs.length; i++) {
-      const d = Math.abs(f - refFreqs[i]);
-      if (d < best) best = d;
+      const c = Math.abs(1200 * Math.log2(f / refFreqs[i]));
+      if (c < bestCents) bestCents = c;
     }
-    return best <= HZ_TOLERANCE_GOOD ? 0 : 2;
+    if (bestCents <= CENTS_TOLERANCE_GOOD) return 0;
+    if (bestCents <= CENTS_TOLERANCE_MED)  return 1;
+    return 2;
   };
 
   const dotR = 1.8 * scale;
@@ -571,8 +634,17 @@ function setStatus(msg: string): void {
 
 function updateStartBtn(): void {
   if (!state.els) return;
-  state.els.startBtn.textContent = state.running ? '⏹ 停止' : '▶ 开始';
+  if (state.running) state.els.startBtn.textContent = '⏸ 暂停';
+  else if (state.ctx) state.els.startBtn.textContent = '▶ 继续';
+  else state.els.startBtn.textContent = '▶ 开始';
   state.refreshPanCursor?.();
+}
+
+// Cycle through the three button states: idle → running → paused → running …
+function togglePlayPause(): void {
+  if (state.running) pause();
+  else if (state.ctx) resume();
+  else start();
 }
 
 // Map a frequency to the nearest note name + cents offset, for the readout.
@@ -607,6 +679,7 @@ export function initRealtime(): void {
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
+    clearBtn: document.getElementById('rt-clear') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
@@ -691,10 +764,8 @@ export function initRealtime(): void {
     });
   });
 
-  state.els.startBtn.addEventListener('click', () => {
-    if (state.running) stop();
-    else start();
-  });
+  state.els.startBtn.addEventListener('click', togglePlayPause);
+  state.els.clearBtn.addEventListener('click', clearData);
 
   state.els.fullscreenBtn.addEventListener('click', toggleFullscreen);
 
@@ -703,6 +774,20 @@ export function initRealtime(): void {
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
   document.addEventListener('fullscreenchange', resizeCanvas);
+
+  // Fullscreen-only shortcuts: Space toggles play/pause (preserving the
+  // trail), K clears the trail. Scoped to fullscreen so they don't hijack
+  // typing in BPM/accent inputs elsewhere on the page.
+  document.addEventListener('keydown', (e) => {
+    if (document.fullscreenElement !== state.els?.wrap) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      togglePlayPause();
+    } else if (e.code === 'KeyK') {
+      e.preventDefault();
+      clearData();
+    }
+  });
 
   updatePitchReadout(-1);
   drawOnce();
@@ -782,9 +867,10 @@ function resizeCanvas(): void {
   drawOnce();
 }
 
-// Called by main.ts when switching away from this tab
+// Called by main.ts when switching away from this tab. Fully release mic +
+// AudioContext (a paused session would otherwise keep the mic indicator on).
 export function realtimeOnLeave(): void {
-  if (state.running) stop();
+  if (state.running || state.ctx) teardown();
 }
 
 // Called by main.ts when switching to this tab
