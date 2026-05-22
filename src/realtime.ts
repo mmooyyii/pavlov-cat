@@ -101,9 +101,10 @@ const state = {
   nextTickBeat: 0,
   nextTickTime: 0,
 
-  // Ring buffer for pitch history
+  // Ring buffer for pitch history (freq + RMS amplitude per sample)
   histTime: new Float32Array(HISTORY_SIZE),
   histFreq: new Float32Array(HISTORY_SIZE),
+  histVol:  new Float32Array(HISTORY_SIZE),
   histCount: 0,
   histHead: 0,
 
@@ -135,14 +136,16 @@ const state = {
 };
 
 // ── Ring buffer ────────────────────────────────────────────────────────────
-function histPush(t: number, f: number): void {
+function histPush(t: number, f: number, v: number): void {
   if (state.histCount < HISTORY_SIZE) {
     state.histTime[state.histCount] = t;
     state.histFreq[state.histCount] = f;
+    state.histVol[state.histCount] = v;
     state.histCount++;
   } else {
     state.histTime[state.histHead] = t;
     state.histFreq[state.histHead] = f;
+    state.histVol[state.histHead] = v;
     state.histHead = (state.histHead + 1) % HISTORY_SIZE;
   }
 }
@@ -152,13 +155,13 @@ function histClear(): void {
   state.histHead = 0;
 }
 
-function histForEach(cb: (t: number, f: number) => void): void {
+function histForEach(cb: (t: number, f: number, v: number) => void): void {
   if (state.histCount < HISTORY_SIZE) {
-    for (let i = 0; i < state.histCount; i++) cb(state.histTime[i], state.histFreq[i]);
+    for (let i = 0; i < state.histCount; i++) cb(state.histTime[i], state.histFreq[i], state.histVol[i]);
   } else {
     for (let i = 0; i < HISTORY_SIZE; i++) {
       const idx = (state.histHead + i) % HISTORY_SIZE;
-      cb(state.histTime[idx], state.histFreq[idx]);
+      cb(state.histTime[idx], state.histFreq[idx], state.histVol[idx]);
     }
   }
 }
@@ -426,8 +429,12 @@ function detectStep(): void {
   if (!state.running || !state.analyser || !state.buffer || !state.ctx) return;
 
   state.analyser.getFloatTimeDomainData(state.buffer);
-  const f = detectPitch(state.buffer, state.ctx.sampleRate);
-  histPush(state.ctx.currentTime, f);
+  const buf = state.buffer;
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / buf.length);
+  const f = detectPitch(buf, state.ctx.sampleRate);
+  histPush(state.ctx.currentTime, f, rms);
   updatePitchReadout(f);
   scheduleMetronome();
 }
@@ -564,9 +571,10 @@ function drawOnce(): void {
     }
   }
 
-  // Pitch trace. With up to ~109k history entries we keep this hot loop cheap
-  // by rejecting on the visible-time window before any log/midi math, and by
-  // batching segments into per-color Path2D buckets (one stroke per color).
+  // Pitch trace + volume waveform. We keep this hot loop cheap by rejecting on
+  // the visible-time window before any log/midi math, batching pitch segments
+  // into per-color Path2D buckets (one stroke per color), and accumulating
+  // volume points into a single mirrored polygon drawn beneath the dots.
   const visibleStartT = state.startTime + (elapsedBeats - state.visibleBeats * PLAYHEAD_RATIO) * secsPerBeat;
   const visibleEndT   = state.startTime + (elapsedBeats + state.visibleBeats * (1 - PLAYHEAD_RATIO)) * secsPerBeat;
 
@@ -594,20 +602,45 @@ function drawOnce(): void {
     return 2;
   };
 
+  // Volume waveform: each visible sample contributes (x, top-y); we mirror
+  // about volCenterY when building the closed polygon below. sqrt mapping
+  // gives a perceptually closer-to-loudness curve than raw RMS.
+  const volCenterY = (topY + bottomY) / 2;
+  const volHalfH = usableH * 0.48;
+  const volXs: number[] = [];
+  const volYs: number[] = [];
+
   const dotR = 1.8 * scale;
-  histForEach((ts, f) => {
+  histForEach((ts, f, v) => {
     if (ts < visibleStartT || ts > visibleEndT) return;
-    if (f <= 0) return;
-    const m = freqToMidi(f);
-    if (m < mMin || m > mMax) return;
     const beat = (ts - state.startTime) / secsPerBeat;
     const x = beatToX(beat);
     if (x < leftMargin || x > W) return;
+
+    const a = Math.min(1, Math.sqrt(v * 3));
+    volXs.push(x);
+    volYs.push(volCenterY - a * volHalfH);
+
+    if (f <= 0) return;
+    const m = freqToMidi(f);
+    if (m < mMin || m > mMax) return;
     const y = midiToY(m);
     const p = buckets[pickBucket(f)].path;
     p.moveTo(x + dotR, y);
     p.arc(x, y, dotR, 0, Math.PI * 2);
   });
+
+  if (volXs.length >= 2) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(volXs[0], volCenterY);
+    for (let i = 0; i < volXs.length; i++) ctx2d.lineTo(volXs[i], volYs[i]);
+    for (let i = volXs.length - 1; i >= 0; i--) {
+      ctx2d.lineTo(volXs[i], 2 * volCenterY - volYs[i]);
+    }
+    ctx2d.closePath();
+    ctx2d.fillStyle = 'rgba(126, 180, 207, 0.22)';
+    ctx2d.fill();
+  }
 
   for (const b of buckets) {
     ctx2d.fillStyle = b.color;
