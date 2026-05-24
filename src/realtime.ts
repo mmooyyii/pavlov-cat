@@ -5,7 +5,7 @@ const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz
 const DETECT_INTERVAL_MS = 16;          // ~62.5Hz pitch detection (windows overlap ~63%)
 const HISTORY_DURATION_S = 3600;        // 1 hour of pitch trajectory
 const HISTORY_SIZE = Math.ceil((HISTORY_DURATION_S * 1000) / DETECT_INTERVAL_MS); // ~225k entries → ~1.7MB total
-const DEFAULT_VISIBLE_BEATS = 16;       // default beats across canvas (higher = slower scroll)
+const DEFAULT_VISIBLE_BEATS = 32;       // default beats across canvas (higher = slower scroll)
 const MIN_VISIBLE_BEATS = 4;
 const MAX_VISIBLE_BEATS = 32;
 const PLAYHEAD_RATIO = 0.25;            // playhead x-position (fraction of width)
@@ -64,8 +64,10 @@ const PALETTE = {
   traceNoRef:   '#ff9a3c',  // when no reference notes are selected
   playhead:     '#5dd4d4',  // cyan-teal
 } as const;
-const CENTS_TOLERANCE_GOOD = 6;   // ≤6¢ → green (trained musician threshold)
-const CENTS_TOLERANCE_MED  = 15;  // ≤20¢ → yellow (perceptible to average listener)
+const DEFAULT_CENTS_TOLERANCE_GOOD = 6;   // ≤6¢ → green (trained musician threshold)
+const DEFAULT_CENTS_TOLERANCE_MED  = 15;  // ≤15¢ → yellow (perceptible to average listener)
+const MIN_CENTS_TOLERANCE = 1;
+const MAX_CENTS_TOLERANCE = 100;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type TimeUnit = 'beat' | 'second';
@@ -85,10 +87,12 @@ const state = {
   bpm: 80,
   timeUnit: 'beat' as TimeUnit,
   accentEvery: 4,
-  metronomeOn: true,
+  metronomeOn: false,
   pitchJudge: true,                     // when off, all dots use neutral color
   visibleBeats: DEFAULT_VISIBLE_BEATS,
-  soundKind: 'wood' as SoundKind,
+  centsToleranceGood: DEFAULT_CENTS_TOLERANCE_GOOD,
+  centsToleranceMed: DEFAULT_CENTS_TOLERANCE_MED,
+  soundKind: 'tom' as SoundKind,
   noiseBuffer: null as AudioBuffer | null,    // shared white-noise source for hihat
 
   // Pan when stopped: displayed elapsed = frozenElapsedBeats + viewOffsetBeats.
@@ -121,6 +125,8 @@ const state = {
     bpmInput: HTMLInputElement;
     accentInput: HTMLInputElement;
     visibleBeatsInput: HTMLInputElement;
+    centsGoodInput: HTMLInputElement;
+    centsMedInput: HTMLInputElement;
     soundSelect: HTMLSelectElement;
     rangeLoSelect: HTMLSelectElement;
     rangeHiSelect: HTMLSelectElement;
@@ -134,6 +140,61 @@ const state = {
     pitchEl: HTMLElement;
   },
 };
+
+// ── Settings persistence ───────────────────────────────────────────────────
+// Single localStorage key holding a JSON snapshot of user-tunable realtime
+// settings. Versioned so schema changes can ignore stale payloads.
+const SETTINGS_KEY = 'pavlov-cat:realtime-settings:v1';
+
+const SOUND_KINDS: readonly SoundKind[] = ['wood', 'click', 'tom', 'hihat'];
+const TIME_UNITS: readonly TimeUnit[] = ['beat', 'second'];
+
+function clampInt(v: unknown, lo: number, hi: number, fallback: number): number {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function loadSettings(): void {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(SETTINGS_KEY); } catch { return; }
+  if (!raw) return;
+  let data: Record<string, unknown>;
+  try { data = JSON.parse(raw) as Record<string, unknown>; } catch { return; }
+  if (!data || typeof data !== 'object') return;
+
+  if ('bpm' in data) state.bpm = clampInt(data.bpm, 40, 220, state.bpm);
+  if ('accentEvery' in data) state.accentEvery = clampInt(data.accentEvery, 1, 12, state.accentEvery);
+  if ('visibleBeats' in data) state.visibleBeats = clampInt(data.visibleBeats, MIN_VISIBLE_BEATS, MAX_VISIBLE_BEATS, state.visibleBeats);
+  if ('centsToleranceGood' in data) state.centsToleranceGood = clampInt(data.centsToleranceGood, MIN_CENTS_TOLERANCE, MAX_CENTS_TOLERANCE, state.centsToleranceGood);
+  if ('centsToleranceMed' in data) state.centsToleranceMed = clampInt(data.centsToleranceMed, MIN_CENTS_TOLERANCE, MAX_CENTS_TOLERANCE, state.centsToleranceMed);
+  if (state.centsToleranceMed < state.centsToleranceGood) state.centsToleranceMed = state.centsToleranceGood;
+  if (typeof data.soundKind === 'string' && SOUND_KINDS.includes(data.soundKind as SoundKind)) state.soundKind = data.soundKind as SoundKind;
+  if (typeof data.timeUnit === 'string' && TIME_UNITS.includes(data.timeUnit as TimeUnit)) state.timeUnit = data.timeUnit as TimeUnit;
+  if (typeof data.metronomeOn === 'boolean') state.metronomeOn = data.metronomeOn;
+  if (typeof data.pitchJudge === 'boolean') state.pitchJudge = data.pitchJudge;
+  if ('loMidi' in data) state.loMidi = clampInt(data.loMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.loMidi);
+  if ('hiMidi' in data) state.hiMidi = clampInt(data.hiMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.hiMidi);
+  if (state.loMidi > state.hiMidi) [state.loMidi, state.hiMidi] = [state.hiMidi, state.loMidi];
+}
+
+function saveSettings(): void {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      bpm: state.bpm,
+      accentEvery: state.accentEvery,
+      visibleBeats: state.visibleBeats,
+      centsToleranceGood: state.centsToleranceGood,
+      centsToleranceMed: state.centsToleranceMed,
+      soundKind: state.soundKind,
+      timeUnit: state.timeUnit,
+      metronomeOn: state.metronomeOn,
+      pitchJudge: state.pitchJudge,
+      loMidi: state.loMidi,
+      hiMidi: state.hiMidi,
+    }));
+  } catch { /* quota / private mode — ignore */ }
+}
 
 // ── Ring buffer ────────────────────────────────────────────────────────────
 function histPush(t: number, f: number, v: number): void {
@@ -174,7 +235,7 @@ function scheduleMetronome(): void {
   while (state.nextTickTime < ctx.currentTime + LOOKAHEAD_S) {
     if (state.metronomeOn) {
       const isAccent = state.nextTickBeat % state.accentEvery === 0;
-      if (isAccent) playBell(ctx, state.nextTickTime);
+      if (isAccent) playSnare(ctx, state.nextTickTime);
       else playSound(ctx, state.nextTickTime, state.soundKind);
     }
     state.nextTickTime += secsPerBeat;
@@ -191,31 +252,44 @@ function playSound(ctx: AudioContext, when: number, kind: SoundKind): void {
   }
 }
 
-// Bell-like accent: two sine partials with longer decay, recognisable as "ding".
-function playBell(ctx: AudioContext, when: number): void {
-  const fundamentals = [1318.5, 1975.5];  // E6 + B6, simple consonant fifth
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(0, when);
-  gain.gain.linearRampToValueAtTime(0.22, when + 0.002);
-  gain.gain.exponentialRampToValueAtTime(0.001, when + 0.35);
-  gain.connect(ctx.destination);
-  const oscs: OscillatorNode[] = [];
-  for (const f of fundamentals) {
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.value = f;
-    o.connect(gain);
-    o.start(when);
-    o.stop(when + 0.4);
-    oscs.push(o);
-  }
-  let stopped = 0;
-  const cleanup = () => {
-    if (++stopped < oscs.length) return;
-    for (const o of oscs) o.disconnect();
-    gain.disconnect();
-  };
-  for (const o of oscs) o.onended = cleanup;
+// Snare accent: band-passed noise burst (the "crack") layered with a short
+// tonal thud (~190Hz → ~110Hz drop) for the drum body. Fits a jazz-kit feel
+// alongside the tom default.
+function playSnare(ctx: AudioContext, when: number): void {
+  // Noise layer — bandpass around 1.8kHz with moderate Q gives the snare's
+  // characteristic snap without too much hiss.
+  const src = ctx.createBufferSource();
+  src.buffer = getNoiseBuffer(ctx);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1800;
+  bp.Q.value = 0.9;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0, when);
+  noiseGain.gain.linearRampToValueAtTime(0.22, when + 0.002);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, when + 0.13);
+  src.connect(bp);
+  bp.connect(noiseGain);
+  noiseGain.connect(ctx.destination);
+  src.start(when);
+  src.stop(when + 0.16);
+
+  // Body layer — quick pitch drop, gives the "thump" under the crack.
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(190, when);
+  osc.frequency.exponentialRampToValueAtTime(110, when + 0.06);
+  const bodyGain = ctx.createGain();
+  bodyGain.gain.setValueAtTime(0, when);
+  bodyGain.gain.linearRampToValueAtTime(0.16, when + 0.003);
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, when + 0.09);
+  osc.connect(bodyGain);
+  bodyGain.connect(ctx.destination);
+  osc.start(when);
+  osc.stop(when + 0.11);
+
+  src.onended = () => { src.disconnect(); bp.disconnect(); noiseGain.disconnect(); };
+  osc.onended = () => { osc.disconnect(); bodyGain.disconnect(); };
 }
 
 // Wood block: sine pop ~2kHz with fast pitch drop, very short tail.
@@ -597,8 +671,8 @@ function drawOnce(): void {
       const c = Math.abs(1200 * Math.log2(f / refFreqs[i]));
       if (c < bestCents) bestCents = c;
     }
-    if (bestCents <= CENTS_TOLERANCE_GOOD) return 0;
-    if (bestCents <= CENTS_TOLERANCE_MED)  return 1;
+    if (bestCents <= state.centsToleranceGood) return 0;
+    if (bestCents <= state.centsToleranceMed)  return 1;
     return 2;
   };
 
@@ -699,12 +773,16 @@ function updatePitchReadout(freq: number): void {
 
 // ── Public init ────────────────────────────────────────────────────────────
 export function initRealtime(): void {
+  loadSettings();   // hydrate state from localStorage before binding UI
+
   state.els = {
     canvas: document.getElementById('realtime-canvas') as HTMLCanvasElement,
     wrap: document.getElementById('rt-canvas-wrap') as HTMLElement,
     bpmInput: document.getElementById('rt-bpm') as HTMLInputElement,
     accentInput: document.getElementById('rt-accent') as HTMLInputElement,
     visibleBeatsInput: document.getElementById('rt-visible-beats') as HTMLInputElement,
+    centsGoodInput: document.getElementById('rt-cents-good') as HTMLInputElement,
+    centsMedInput: document.getElementById('rt-cents-med') as HTMLInputElement,
     soundSelect: document.getElementById('rt-sound') as HTMLSelectElement,
     rangeLoSelect: document.getElementById('rt-range-lo') as HTMLSelectElement,
     rangeHiSelect: document.getElementById('rt-range-hi') as HTMLSelectElement,
@@ -737,6 +815,7 @@ export function initRealtime(): void {
     state.els!.rangeLoSelect.value = String(lo);
     state.els!.rangeHiSelect.value = String(hi);
     state.rangeNotes = refNotesForRange(lo, hi);
+    saveSettings();
     drawOnce();
   };
   state.els.rangeLoSelect.addEventListener('change', onRangeChange);
@@ -747,6 +826,7 @@ export function initRealtime(): void {
     const v = Math.max(40, Math.min(220, Number(state.els!.bpmInput.value) || 80));
     state.bpm = v;
     state.els!.bpmInput.value = String(v);
+    saveSettings();
     if (!state.running) drawOnce();
   });
 
@@ -755,6 +835,7 @@ export function initRealtime(): void {
     const v = Math.max(1, Math.min(12, Math.floor(Number(state.els!.accentInput.value)) || 4));
     state.accentEvery = v;
     state.els!.accentInput.value = String(v);
+    saveSettings();
     drawOnce();
   });
 
@@ -764,12 +845,34 @@ export function initRealtime(): void {
     const v = Math.max(MIN_VISIBLE_BEATS, Math.min(MAX_VISIBLE_BEATS, raw));
     state.visibleBeats = v;
     state.els!.visibleBeatsInput.value = String(v);
+    saveSettings();
     drawOnce();
   });
+
+  const clampCents = (n: number): number =>
+    Math.max(MIN_CENTS_TOLERANCE, Math.min(MAX_CENTS_TOLERANCE, n));
+
+  state.els.centsGoodInput.value = String(state.centsToleranceGood);
+  state.els.centsMedInput.value = String(state.centsToleranceMed);
+  const onCentsChange = (): void => {
+    const els = state.els!;
+    let good = clampCents(Math.floor(Number(els.centsGoodInput.value)) || DEFAULT_CENTS_TOLERANCE_GOOD);
+    let med  = clampCents(Math.floor(Number(els.centsMedInput.value))  || DEFAULT_CENTS_TOLERANCE_MED);
+    if (med < good) med = good;        // keep yellow band ≥ green band
+    state.centsToleranceGood = good;
+    state.centsToleranceMed = med;
+    els.centsGoodInput.value = String(good);
+    els.centsMedInput.value = String(med);
+    saveSettings();
+    drawOnce();
+  };
+  state.els.centsGoodInput.addEventListener('change', onCentsChange);
+  state.els.centsMedInput.addEventListener('change', onCentsChange);
 
   state.els.soundSelect.value = state.soundKind;
   state.els.soundSelect.addEventListener('change', () => {
     state.soundKind = state.els!.soundSelect.value as SoundKind;
+    saveSettings();
   });
 
   state.els.metronomeToggles.forEach(btn => {
@@ -777,6 +880,7 @@ export function initRealtime(): void {
     btn.addEventListener('click', () => {
       state.metronomeOn = btn.dataset.value === 'on';
       state.els!.metronomeToggles.forEach(b => b.classList.toggle('active', b === btn));
+      saveSettings();
     });
   });
 
@@ -785,14 +889,17 @@ export function initRealtime(): void {
     btn.addEventListener('click', () => {
       state.pitchJudge = btn.dataset.value === 'on';
       state.els!.judgeToggles.forEach(b => b.classList.toggle('active', b === btn));
+      saveSettings();
       drawOnce();
     });
   });
 
   state.els.unitToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === state.timeUnit);
     btn.addEventListener('click', () => {
       state.timeUnit = btn.dataset.value as TimeUnit;
       state.els!.unitToggles.forEach(b => b.classList.toggle('active', b === btn));
+      saveSettings();
       drawOnce();
     });
   });

@@ -453,13 +453,10 @@ canvas {
   gap: 6px;
 }
 
-.rt-actions {
-  margin-left: auto;
-  gap: 8px;
-}
-
 #rt-bpm,
-#rt-accent {
+#rt-accent,
+#rt-cents-good,
+#rt-cents-med {
   width: 64px;
   padding: 4px 6px;
   border: 1.5px solid var(--border);
@@ -468,6 +465,11 @@ canvas {
   font-weight: 600;
   text-align: center;
   background: var(--surface);
+}
+
+#rt-cents-good,
+#rt-cents-med {
+  width: 52px;
 }
 
 .rt-select {
@@ -528,6 +530,45 @@ canvas {
   background: rgba(255, 255, 255, 0.18);
 }
 
+.rt-canvas-actions {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 8px;
+  z-index: 2;
+}
+
+.rt-overlay-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.rt-overlay-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.rt-overlay-btn-primary {
+  background: rgba(93, 212, 212, 0.28);
+  border-color: rgba(93, 212, 212, 0.55);
+}
+
+.rt-overlay-btn-primary:hover {
+  background: rgba(93, 212, 212, 0.42);
+}
+
 .rt-canvas-wrap:fullscreen {
   height: 100vh;
   width: 100vw;
@@ -539,6 +580,11 @@ canvas {
 .rt-canvas-wrap:fullscreen .rt-fullscreen-btn {
   top: 14px;
   right: 14px;
+}
+
+.rt-canvas-wrap:fullscreen .rt-canvas-actions {
+  top: 14px;
+  left: 14px;
 }
 
 .rt-footer {
