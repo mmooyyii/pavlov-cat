@@ -139,41 +139,55 @@ export const ALL_NOTES: Note[] = [
     fingerings: [{ position: 2, string: 'E', finger: 4 }] },
 
   // ── 3rd position ───────────────────────────────────────────────────
-  // Shift: 1st finger starts at C on G string (2 whole steps from G open)
+  // 1st finger one perfect 4th above each open string (where 1st-position
+  // 3rd finger was). Pattern W-W-H from f1 to f4 (half step between 3-4),
+  // covering exactly a perfect 4th — the natural hand span.
   { name: 'C4', frequency: freq(48), staffStep: staffStep('C', 4),
     fingerings: [{ position: 3, string: 'G', finger: 1 }] },
 
   { name: 'D4', frequency: freq(50), staffStep: staffStep('D', 4),
-    fingerings: [{ position: 3, string: 'G', finger: 2 }, { position: 3, string: 'D', finger: 1 }] },
+    fingerings: [{ position: 3, string: 'G', finger: 2 }] },
 
   { name: 'E4', frequency: freq(52), staffStep: staffStep('E', 4),
-    fingerings: [{ position: 3, string: 'G', finger: 3 }, { position: 3, string: 'D', finger: 2 }] },
+    fingerings: [{ position: 3, string: 'G', finger: 3 }] },
 
   { name: 'F4', frequency: freq(53), staffStep: staffStep('F', 4),
     fingerings: [{ position: 3, string: 'G', finger: 4 }] },
 
   { name: 'G4', frequency: freq(55), staffStep: staffStep('G', 4),
-    fingerings: [{ position: 3, string: 'D', finger: 3 }, { position: 3, string: 'A', finger: 1 }] },
+    fingerings: [{ position: 3, string: 'D', finger: 1 }] },
 
   { name: 'A4', frequency: freq(57), staffStep: staffStep('A', 4),
-    fingerings: [{ position: 3, string: 'D', finger: 4 }, { position: 3, string: 'A', finger: 2 }] },
+    fingerings: [{ position: 3, string: 'D', finger: 2 }] },
 
   { name: 'B4', frequency: freq(59), staffStep: staffStep('B', 4),
-    fingerings: [{ position: 3, string: 'A', finger: 3 }, { position: 3, string: 'E', finger: 1 }] },
+    fingerings: [{ position: 3, string: 'D', finger: 3 }] },
 
   { name: 'C5', frequency: freq(60), staffStep: staffStep('C', 5),
-    fingerings: [{ position: 3, string: 'A', finger: 4 }, { position: 3, string: 'E', finger: 2 }] },
+    fingerings: [{ position: 3, string: 'D', finger: 4 }] },
 
   { name: 'D5', frequency: freq(62), staffStep: staffStep('D', 5),
-    fingerings: [{ position: 3, string: 'E', finger: 3 }] },
+    fingerings: [{ position: 3, string: 'A', finger: 1 }] },
 
   { name: 'E5', frequency: freq(64), staffStep: staffStep('E', 5),
-    fingerings: [{ position: 3, string: 'E', finger: 4 }] },
+    fingerings: [{ position: 3, string: 'A', finger: 2 }] },
 
-  { name: 'F5', frequency: freq(65), staffStep: staffStep('F', 5),
-    fingerings: [{ position: 3, string: 'E', finger: 4 }] },
+  { name: 'F#5', frequency: freq(66), staffStep: staffStep('F', 5),
+    fingerings: [{ position: 3, string: 'A', finger: 3 }] },
 
   { name: 'G5', frequency: freq(67), staffStep: staffStep('G', 5),
+    fingerings: [{ position: 3, string: 'A', finger: 4 }] },
+
+  { name: 'A5', frequency: freq(69), staffStep: staffStep('A', 5),
+    fingerings: [{ position: 3, string: 'E', finger: 1 }] },
+
+  { name: 'B5', frequency: freq(71), staffStep: staffStep('B', 5),
+    fingerings: [{ position: 3, string: 'E', finger: 2 }] },
+
+  { name: 'C#6', frequency: freq(73), staffStep: staffStep('C', 6),
+    fingerings: [{ position: 3, string: 'E', finger: 3 }] },
+
+  { name: 'D6', frequency: freq(74), staffStep: staffStep('D', 6),
     fingerings: [{ position: 3, string: 'E', finger: 4 }] },
 ];
 
