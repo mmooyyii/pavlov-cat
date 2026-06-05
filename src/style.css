@@ -21,9 +21,27 @@ body {
 }
 
 #app {
-  max-width: 680px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 16px 24px;
+}
+
+/* Sidebar + content layout */
+#app-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+#sidebar {
+  flex: 0 0 160px;
+  position: sticky;
+  top: 16px;
+}
+
+#content {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* Header */
@@ -101,30 +119,38 @@ body.mode-realtime #config { display: none; }
   font-weight: 600;
 }
 
-/* Tabs */
+/* Tabs (vertical sidebar nav) */
 #tabs {
   display: flex;
-  gap: 0;
-  margin-bottom: 16px;
-  border-bottom: 2px solid var(--border);
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
 }
 
 .tab {
-  padding: 8px 20px;
+  padding: 10px 14px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   font-size: 0.95rem;
   font-weight: 500;
   color: var(--muted);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
+  text-align: left;
   transition: all 0.15s;
 }
 
+.tab:hover:not(.active) {
+  background: #f0f5f0;
+  color: var(--text);
+}
+
 .tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
   font-weight: 700;
 }
 
@@ -292,12 +318,92 @@ canvas {
   border-color: var(--muted);
 }
 
+/* Quiz note pool picker */
+.note-pool {
+  margin-bottom: 16px;
+}
+
+.note-pool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.note-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.note-octave {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.note-octave-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.note-octave-label:hover {
+  color: var(--accent);
+}
+
+.note-octave-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.note-chip {
+  padding: 4px 9px;
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-chip:hover:not(.active) {
+  border-color: var(--accent-lt);
+  background: #f0f5f0;
+}
+
+.note-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 /* Practice panel */
 .note-palette {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 16px;
+}
+
+.palette-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .palette-position {
@@ -601,4 +707,24 @@ canvas {
 .rt-pitch {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
+}
+
+/* Narrow screens: sidebar collapses to a horizontal bar above content */
+@media (max-width: 640px) {
+  #app-body {
+    flex-direction: column;
+  }
+  #sidebar {
+    flex: none;
+    width: 100%;
+    position: static;
+  }
+  #tabs {
+    flex-direction: row;
+  }
+  .tab {
+    flex: 1;
+    text-align: center;
+    padding: 8px 10px;
+  }
 }

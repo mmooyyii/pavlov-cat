@@ -1,14 +1,20 @@
-import { getFilteredNotes, fingeringLabel, NOTES_BY_NAME, type Note, type StringName, type Fingering } from './notes';
+import {
+  fingeringLabel,
+  DEFAULT_MIDIS, PITCH_MIN_MIDI, PITCH_MAX_MIDI,
+  spellMidi, buildKeyPool, noteForMidi, TONICS_MAJOR, TONICS_MINOR,
+  type Note, type Fingering, type Spelled,
+} from './notes';
 import { playNote, preloadSounds, setAudioDirectory } from './audio';
 import { drawStaff } from './staff';
 import { initRealtime, realtimeOnEnter, realtimeOnLeave } from './realtime';
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
-  positions: [1] as number[],
-  strings: ['G', 'D', 'A', 'E'] as StringName[],
   mode: 'quiz' as 'quiz' | 'practice' | 'realtime',
   quiz: {
+    notes: new Set<number>(DEFAULT_MIDIS), // selected pool, by midi
+    spelling: new Map<number, Spelled>(),  // current display spelling per midi
+    keyMode: 'major' as 'major' | 'minor',
     type: 'note-to-fingering' as QuizType,
     question: null as QuizQuestion | null,
     answered: false,
@@ -16,6 +22,10 @@ const state = {
     total: 0,
   },
   practice: {
+    spelling: new Map<number, Spelled>(), // current display spelling per midi
+    keyMode: 'major' as 'major' | 'minor',
+    midis: [] as number[],                // notes shown in the palette
+    activeMidi: null as number | null,    // currently inspected note
     note: null as Note | null,
   },
 };
@@ -43,8 +53,21 @@ function pickRandom<T>(arr: T[], n: number): T[] {
   return shuffle([...arr]).slice(0, n);
 }
 
-function filteredNotes(): Note[] {
-  return getFilteredNotes(state.positions, state.strings);
+// Notes currently selected for the quiz pool, in pitch order.
+function quizNotes(): Note[] {
+  return [...state.quiz.notes]
+    .sort((a, b) => a - b)
+    .map(m => noteForMidi(m, state.quiz.spelling.get(m) ?? spellMidi(m, 'sharp')));
+}
+
+function midiOctave(m: number): number {
+  return Math.floor(m / 12) - 1;
+}
+
+function rangeMidis(): number[] {
+  const out: number[] = [];
+  for (let m = PITCH_MIN_MIDI; m <= PITCH_MAX_MIDI; m++) out.push(m);
+  return out;
 }
 
 // ── DOM helpers ─────────────────────────────────────────────────────────────
@@ -52,47 +75,114 @@ function el<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
 
-// ── Config toggles ──────────────────────────────────────────────────────────
-function setupConfig(): void {
-  el('position-toggles').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.toggle');
-    if (!btn) return;
-    const val = Number(btn.dataset.value);
-    const idx = state.positions.indexOf(val);
-    if (idx >= 0) {
-      if (state.positions.length === 1) return; // keep at least one
-      state.positions.splice(idx, 1);
-      btn.classList.remove('active');
-    } else {
-      state.positions.push(val);
-      btn.classList.add('active');
-    }
-    onConfigChange();
-  });
+// ── Quiz note pool: key selector + chips ──────────────────────────────────────
+function renderChips(): void {
+  const groups = new Map<number, number[]>();
+  for (const m of rangeMidis()) {
+    const o = midiOctave(m);
+    if (!groups.has(o)) groups.set(o, []);
+    groups.get(o)!.push(m);
+  }
 
-  el('string-toggles').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.toggle');
-    if (!btn) return;
-    const val = btn.dataset.value as StringName;
-    const idx = state.strings.indexOf(val);
-    if (idx >= 0) {
-      if (state.strings.length === 1) return;
-      state.strings.splice(idx, 1);
-      btn.classList.remove('active');
-    } else {
-      state.strings.push(val);
-      btn.classList.add('active');
+  let html = '';
+  for (const [oct, list] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+    html += `<div class="note-octave">`;
+    html += `<button class="note-octave-label" data-octave="${oct}">${oct}组</button>`;
+    html += `<div class="note-octave-chips">`;
+    for (const m of list) {
+      const sp = state.quiz.spelling.get(m) ?? spellMidi(m, 'sharp');
+      const on = state.quiz.notes.has(m) ? ' active' : '';
+      html += `<button class="note-chip${on}" data-midi="${m}">${sp.name}</button>`;
     }
-    onConfigChange();
+    html += `</div></div>`;
+  }
+  el('quiz-note-picker').innerHTML = html;
+}
+
+function refreshPickerActive(): void {
+  el('quiz-note-picker').querySelectorAll<HTMLButtonElement>('.note-chip').forEach(c => {
+    c.classList.toggle('active', state.quiz.notes.has(Number(c.dataset.midi)));
   });
 }
 
-function onConfigChange(): void {
+function fillTonicSelect(sel: HTMLSelectElement, keyMode: 'major' | 'minor'): void {
+  const tonics = keyMode === 'major' ? TONICS_MAJOR : TONICS_MINOR;
+  const suffix = keyMode === 'major' ? '大调' : '小调';
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">自定义</option>` +
+    tonics.map(t => `<option value="${t}">${t}${suffix}</option>`).join('');
+  sel.value = tonics.includes(prev) ? prev : '';
+}
+
+// Fill the pool from the selected key (empty tonic = leave manual selection).
+function applyKey(): void {
+  const tonic = el<HTMLSelectElement>('key-tonic').value;
+  if (!tonic) return;
+  const { midis, spelling } = buildKeyPool(tonic, state.quiz.keyMode);
+  state.quiz.spelling = spelling;
+  state.quiz.notes = new Set(midis);
+  renderChips();
+  onPoolChange();
+}
+
+function setupQuizPool(): void {
+  // Default spelling: sharps for black keys across the whole range.
+  for (const m of rangeMidis()) state.quiz.spelling.set(m, spellMidi(m, 'sharp'));
+
+  fillTonicSelect(el('key-tonic'), state.quiz.keyMode);
+  renderChips();
+
+  // chip toggle + whole-octave toggle (event delegation; survives re-render)
+  el('quiz-note-picker').addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    const chip = target.closest<HTMLButtonElement>('.note-chip');
+    if (chip) {
+      const m = Number(chip.dataset.midi);
+      if (state.quiz.notes.has(m)) state.quiz.notes.delete(m);
+      else state.quiz.notes.add(m);
+      chip.classList.toggle('active');
+      onPoolChange();
+      return;
+    }
+    const octBtn = target.closest<HTMLButtonElement>('.note-octave-label');
+    if (octBtn) {
+      const oct = Number(octBtn.dataset.octave);
+      const ms = rangeMidis().filter(m => midiOctave(m) === oct);
+      const allOn = ms.every(m => state.quiz.notes.has(m));
+      for (const m of ms) { if (allOn) state.quiz.notes.delete(m); else state.quiz.notes.add(m); }
+      refreshPickerActive();
+      onPoolChange();
+    }
+  });
+
+  // 全选 / 清空
+  el('quiz-panel').querySelectorAll<HTMLButtonElement>('.note-pool-head .toggle[data-act]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.act === 'all') for (const m of rangeMidis()) state.quiz.notes.add(m);
+      else state.quiz.notes.clear();
+      refreshPickerActive();
+      onPoolChange();
+    });
+  });
+
+  // 大调 / 小调 toggle
+  el('key-mode').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.toggle');
+    if (!btn) return;
+    el('key-mode').querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    state.quiz.keyMode = btn.dataset.mode as 'major' | 'minor';
+    fillTonicSelect(el('key-tonic'), state.quiz.keyMode);
+    applyKey();
+  });
+
+  el('key-tonic').addEventListener('change', applyKey);
+}
+
+function onPoolChange(): void {
   state.quiz.question = null;
   state.quiz.answered = false;
-  buildPracticeNotes();
-  if (state.mode === 'quiz') newQuestion();
-  else if (state.mode === 'practice') renderPractice();
+  newQuestion();
 }
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
@@ -133,7 +223,7 @@ function setupQuiz(): void {
 }
 
 function newQuestion(): void {
-  const notes = filteredNotes();
+  const notes = quizNotes();
   if (notes.length < 4) {
     el('quiz-question-text').textContent = '请至少选择4个可用音符的配置';
     el('quiz-options').innerHTML = '';
@@ -141,17 +231,28 @@ function newQuestion(): void {
   }
 
   const q = generateQuestion(state.quiz.type, notes);
-  if (!q) return;
+  if (!q) {
+    // Fingering question types need notes that actually have fingerings.
+    el('quiz-question-text').textContent = '当前音符没有指法数据，请改用「五线谱 / 声音」题型，或选择含指法的音';
+    el('quiz-options').innerHTML = '';
+    el('quiz-feedback').textContent = '';
+    el('quiz-play-btn').style.display = 'none';
+    el<HTMLCanvasElement>('quiz-canvas').style.display = 'none';
+    return;
+  }
   state.quiz.question = q;
   state.quiz.answered = false;
   renderQuestion(q);
 }
 
 function generateQuestion(type: QuizType, notes: Note[]): QuizQuestion | null {
-  const note = notes[Math.floor(Math.random() * notes.length)];
+  const pickAny = () => notes[Math.floor(Math.random() * notes.length)];
 
   if (type === 'note-to-fingering') {
-    // Show note name (+ play), choose correct fingering
+    // Show note name (+ play), choose correct fingering. Answer must have one.
+    const fingered = notes.filter(n => n.fingerings.length > 0);
+    if (fingered.length === 0) return null;
+    const note = fingered[Math.floor(Math.random() * fingered.length)];
     const correctF = note.fingerings[Math.floor(Math.random() * note.fingerings.length)];
     const correctLabel = fingeringLabel(correctF);
 
@@ -170,7 +271,10 @@ function generateQuestion(type: QuizType, notes: Note[]): QuizQuestion | null {
   }
 
   if (type === 'fingering-to-note') {
-    // Show fingering, choose correct note name
+    // Show fingering, choose correct note name. Answer must have one.
+    const fingered = notes.filter(n => n.fingerings.length > 0);
+    if (fingered.length === 0) return null;
+    const note = fingered[Math.floor(Math.random() * fingered.length)];
     const shownFingering = note.fingerings[Math.floor(Math.random() * note.fingerings.length)];
     const wrongNotes = pickRandom(notes.filter(n => n.name !== note.name), 3);
     const options = [note.name, ...wrongNotes.map(n => n.name)];
@@ -180,6 +284,7 @@ function generateQuestion(type: QuizType, notes: Note[]): QuizQuestion | null {
 
   if (type === 'staff-to-note') {
     // Show staff without name, choose correct note name
+    const note = pickAny();
     const wrongNotes = pickRandom(notes.filter(n => n.name !== note.name), 3);
     const options = [note.name, ...wrongNotes.map(n => n.name)];
     shuffle(options);
@@ -188,6 +293,7 @@ function generateQuestion(type: QuizType, notes: Note[]): QuizQuestion | null {
 
   if (type === 'sound-to-note') {
     // Play sound only, choose correct note name
+    const note = pickAny();
     const wrongNotes = pickRandom(notes.filter(n => n.name !== note.name), 3);
     const options = [note.name, ...wrongNotes.map(n => n.name)];
     shuffle(options);
@@ -283,76 +389,69 @@ function onAnswer(chosen: number): void {
 }
 
 // ── Practice Mode ───────────────────────────────────────────────────────────
-const POS_LABEL = ['', '一', '二', '三'];
-const STRING_ORDER: StringName[] = ['G', 'D', 'A', 'E'];
+// Same key control as the quiz: pick 大调/小调 + 主音 to show that scale's notes
+// (full chromatic range when 自定义). Click a note to inspect staff + fingerings.
+function setupPracticePool(): void {
+  for (const m of rangeMidis()) state.practice.spelling.set(m, spellMidi(m, 'sharp'));
+  state.practice.midis = rangeMidis();
+
+  fillTonicSelect(el('practice-key-tonic'), state.practice.keyMode);
+  buildPracticeNotes();
+
+  el('practice-key-mode').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.toggle');
+    if (!btn) return;
+    el('practice-key-mode').querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    state.practice.keyMode = btn.dataset.mode as 'major' | 'minor';
+    fillTonicSelect(el('practice-key-tonic'), state.practice.keyMode);
+    applyPracticeKey();
+  });
+
+  el('practice-key-tonic').addEventListener('change', applyPracticeKey);
+}
+
+function applyPracticeKey(): void {
+  const tonic = el<HTMLSelectElement>('practice-key-tonic').value;
+  if (!tonic) {
+    for (const m of rangeMidis()) state.practice.spelling.set(m, spellMidi(m, 'sharp'));
+    state.practice.midis = rangeMidis();
+  } else {
+    const { midis, spelling } = buildKeyPool(tonic, state.practice.keyMode);
+    state.practice.spelling = spelling;
+    state.practice.midis = midis;
+  }
+  // Drop the inspected note if it's no longer shown.
+  if (state.practice.activeMidi !== null && !state.practice.midis.includes(state.practice.activeMidi)) {
+    state.practice.activeMidi = null;
+    state.practice.note = null;
+  }
+  buildPracticeNotes();
+  renderPractice();
+}
 
 function buildPracticeNotes(): void {
-  const allNotes = filteredNotes();
   const palette = el('note-palette');
 
-  const positions = [...state.positions].sort((a, b) => a - b);
-  const strings = STRING_ORDER.filter(s => state.strings.includes(s));
-
-  let html = '';
-  for (const pos of positions) {
-    // Build lookup: "finger-string" → note
-    const cell = new Map<string, Note>();
-    for (const n of allNotes) {
-      for (const f of n.fingerings) {
-        if (f.position === pos) cell.set(`${f.finger}-${f.string}`, n);
-      }
-    }
-
-    const cols = `28px ${strings.map(() => '1fr').join(' ')}`;
-    html += `<div class="palette-position">`;
-    html += `<div class="palette-pos-label">${POS_LABEL[pos]}把位</div>`;
-    html += `<div class="palette-grid" style="grid-template-columns:${cols}">`;
-
-    // Header row: corner + string labels
-    html += `<div></div>`;
-    for (const str of strings) {
-      html += `<div class="palette-grid-str">${str}</div>`;
-    }
-
-    // Finger rows: 0 → 4
-    for (let finger = 0; finger <= 4; finger++) {
-      html += `<div class="palette-grid-finger">${finger === 0 ? '○' : finger}</div>`;
-      for (const str of strings) {
-        const note = cell.get(`${finger}-${str}`);
-        if (note) {
-          html += `<button class="note-btn" data-name="${note.name}">${note.name}</button>`;
-        } else {
-          html += `<div class="palette-grid-empty"></div>`;
-        }
-      }
-    }
-
-    html += `</div></div>`;
-  }
-
-  palette.innerHTML = html;
+  palette.innerHTML = state.practice.midis.map(m => {
+    const sp = state.practice.spelling.get(m) ?? spellMidi(m, 'sharp');
+    const on = state.practice.activeMidi === m ? ' active' : '';
+    return `<button class="note-btn${on}" data-midi="${m}">${sp.name}</button>`;
+  }).join('');
 
   palette.querySelectorAll<HTMLButtonElement>('.note-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.classList.contains('active')) return;
-      const name = btn.dataset.name!;
-      const note = allNotes.find(n => n.name === name) ?? null;
-      state.practice.note = note;
+      const m = Number(btn.dataset.midi);
+      const sp = state.practice.spelling.get(m) ?? spellMidi(m, 'sharp');
+      state.practice.activeMidi = m;
+      state.practice.note = noteForMidi(m, sp);
       palette.querySelectorAll('.note-btn').forEach(b => b.classList.remove('active'));
-      palette.querySelectorAll<HTMLButtonElement>('.note-btn').forEach(b => {
-        if (b.dataset.name === name) b.classList.add('active');
-      });
+      btn.classList.add('active');
       renderPractice();
-      if (note) playNote(note.name, note.frequency);
+      playNote(state.practice.note.name, state.practice.note.frequency);
     });
   });
-
-  if (state.practice.note) {
-    const name = state.practice.note.name;
-    palette.querySelectorAll<HTMLButtonElement>('.note-btn').forEach(b => {
-      if (b.dataset.name === name) b.classList.add('active');
-    });
-  }
 }
 
 function renderPractice(): void {
@@ -370,9 +469,9 @@ function renderPractice(): void {
 
   drawStaff(canvas, note, false);
   nameEl.textContent = note.name;
-  fingeringsEl.innerHTML = note.fingerings
-    .map(f => `<span class="fingering-tag">${fingeringLabel(f)}</span>`)
-    .join('');
+  fingeringsEl.innerHTML = note.fingerings.length
+    ? note.fingerings.map(f => `<span class="fingering-tag">${fingeringLabel(f)}</span>`).join('')
+    : `<span class="palette-empty">无指法数据</span>`;
 }
 
 // ── Audio directory picker ────────────────────────────────────────────────────
@@ -389,11 +488,11 @@ function setupAudioDirPicker(): void {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
-setupConfig();
+setupQuizPool();
 setupTabs();
 setupQuiz();
 setupAudioDirPicker();
-buildPracticeNotes();
+setupPracticePool();
 newQuestion();
 initRealtime();
 

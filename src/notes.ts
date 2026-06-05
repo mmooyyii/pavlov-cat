@@ -228,8 +228,151 @@ export function getFilteredNotes(positions: number[], strings: StringName[]): No
   return result;
 }
 
+// All distinct note names, sorted by pitch (staff step, then frequency for
+// natural/sharp ties like F4 vs F#4). Each note carries its full fingering set.
+export function allNotesSorted(): Note[] {
+  return [...NOTES_BY_NAME.values()]
+    .sort((a, b) => a.staffStep - b.staffStep || a.frequency - b.frequency);
+}
+
+// Default note pool = old "1st position, all strings" default, to preserve
+// the original out-of-the-box experience.
+export const DEFAULT_NOTE_NAMES: string[] =
+  getFilteredNotes([1], ['G', 'D', 'A', 'E'] as StringName[]).map(n => n.name);
+
 export function fingeringLabel(f: Fingering): string {
   const finger = f.finger === 0 ? '空弦' : `${f.finger}指`;
   const pos = ['', '一', '二', '三'][f.position];
   return `${pos}把位 ${f.string}弦 ${finger}`;
 }
+
+// ── Chromatic / key-based note model ─────────────────────────────────────────
+// Lets the quiz pool be driven by a major/minor key. The natural notes and the
+// hand-entered sharps keep their fingerings; any other accidental resolves to
+// no fingering (it can still appear in staff / sound / name questions).
+
+const A4_HZ = 442; // matches freq() reference above
+export const PITCH_MIN_MIDI = 55; // G3
+export const PITCH_MAX_MIDI = 86; // D6
+
+export function midiToFreq(midi: number): number {
+  return A4_HZ * Math.pow(2, (midi - 69) / 12);
+}
+function freqToMidi(freq: number): number {
+  return Math.round(69 + 12 * Math.log2(freq / A4_HZ));
+}
+
+// midi → fingerings, derived from the curated note set.
+export const FINGERINGS_BY_MIDI = new Map<number, Fingering[]>();
+for (const n of NOTES_BY_NAME.values()) {
+  FINGERINGS_BY_MIDI.set(freqToMidi(n.frequency), n.fingerings);
+}
+
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const LETTER_PC: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const FLAT_NAMES  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+export interface Spelled { name: string; staffStep: number; }
+
+// staffStep for a letter + octave (matches private staffStep(): accidentals
+// don't move the staff line). 30 = E4 reference.
+function stepForLetter(letter: string, octave: number): number {
+  return LETTERS.indexOf(letter) + octave * 7 - 30;
+}
+
+function accSymbol(delta: number): string {
+  if (delta === 2) return '##';
+  if (delta === 1) return '#';
+  if (delta === -1) return 'b';
+  if (delta === -2) return 'bb';
+  return '';
+}
+
+// Spell a midi pitch using sharps or flats for the black keys.
+export function spellMidi(midi: number, acc: 'sharp' | 'flat'): Spelled {
+  const pc = ((midi % 12) + 12) % 12;
+  const octave = Math.floor(midi / 12) - 1; // C4 (midi 60) → 4
+  const nm = (acc === 'flat' ? FLAT_NAMES : SHARP_NAMES)[pc];
+  return { name: `${nm}${octave}`, staffStep: stepForLetter(nm[0], octave) };
+}
+
+const MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11];
+const MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10]; // natural minor
+
+function parseTonic(name: string): { letter: string; delta: number } {
+  const acc = name.slice(1);
+  const delta = acc === '#' ? 1 : acc === 'b' ? -1 : 0;
+  return { letter: name[0], delta };
+}
+
+// The 7 spelled degrees of a key: each uses a distinct consecutive letter,
+// with the accidental needed to hit the target pitch class.
+function scaleDegrees(tonicName: string, mode: 'major' | 'minor') {
+  const { letter, delta } = parseTonic(tonicName);
+  const steps = mode === 'major' ? MAJOR_STEPS : MINOR_STEPS;
+  const tonicPc = (LETTER_PC[letter] + delta + 120) % 12;
+  const li = LETTERS.indexOf(letter);
+  const out: { letter: string; delta: number; pc: number }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const lt = LETTERS[(li + i) % 7];
+    const pc = (tonicPc + steps[i]) % 12;
+    let d = ((pc - LETTER_PC[lt] + 6 + 1200) % 12) - 6; // normalize to -6..5
+    out.push({ letter: lt, delta: d, pc });
+  }
+  return out;
+}
+
+// Build the note pool for a key: which in-range midis belong to the scale, plus
+// a spelling for every in-range pitch (scale tones get their exact spelling;
+// the rest follow the key's sharp/flat direction).
+export function buildKeyPool(tonicName: string, mode: 'major' | 'minor'): {
+  midis: number[];
+  spelling: Map<number, Spelled>;
+} {
+  const degrees = scaleDegrees(tonicName, mode);
+  const flats = degrees.filter(d => d.delta < 0).length;
+  const sharps = degrees.filter(d => d.delta > 0).length;
+  const dir: 'sharp' | 'flat' = flats > sharps ? 'flat' : 'sharp';
+
+  const spelling = new Map<number, Spelled>();
+  for (let m = PITCH_MIN_MIDI; m <= PITCH_MAX_MIDI; m++) {
+    spelling.set(m, spellMidi(m, dir));
+  }
+
+  const byPc = new Map<number, { letter: string; delta: number }>();
+  for (const d of degrees) byPc.set(d.pc, d);
+
+  const midis: number[] = [];
+  for (let m = PITCH_MIN_MIDI; m <= PITCH_MAX_MIDI; m++) {
+    const pc = ((m % 12) + 12) % 12;
+    const d = byPc.get(pc);
+    if (!d) continue;
+    midis.push(m);
+    const octave = Math.round((m - d.delta - LETTER_PC[d.letter]) / 12) - 1;
+    spelling.set(m, {
+      name: `${d.letter}${accSymbol(d.delta)}${octave}`,
+      staffStep: stepForLetter(d.letter, octave),
+    });
+  }
+  return { midis, spelling };
+}
+
+// Construct a playable Note for a midi + chosen spelling.
+export function noteForMidi(midi: number, sp: Spelled): Note {
+  return {
+    name: sp.name,
+    frequency: midiToFreq(midi),
+    staffStep: sp.staffStep,
+    fingerings: FINGERINGS_BY_MIDI.get(midi) ?? [],
+  };
+}
+
+// Default pool = old "1st position, all strings" notes, as midi values, so the
+// quiz works out of the box and fingering question types have material.
+export const DEFAULT_MIDIS: number[] =
+  getFilteredNotes([1], ['G', 'D', 'A', 'E'] as StringName[]).map(n => freqToMidi(n.frequency));
+
+// Tonics offered per mode (chosen to avoid double accidentals).
+export const TONICS_MAJOR = ['C', 'G', 'D', 'A', 'E', 'B', 'F#', 'Db', 'Ab', 'Eb', 'Bb', 'F'];
+export const TONICS_MINOR = ['A', 'E', 'B', 'F#', 'C#', 'G#', 'Eb', 'Bb', 'F', 'C', 'G', 'D'];

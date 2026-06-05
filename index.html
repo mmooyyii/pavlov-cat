@@ -31,25 +31,18 @@
       </div>
     </header>
 
+    <div id="app-body">
+    <aside id="sidebar">
+      <nav id="tabs">
+        <button class="tab active" data-mode="quiz">出题模式</button>
+        <button class="tab" data-mode="practice">练习模式</button>
+        <button class="tab" data-mode="realtime">实时反馈</button>
+      </nav>
+    </aside>
+
+    <div id="content">
     <section id="config">
       <div class="config-row">
-        <div class="config-group">
-          <span class="config-label">把位</span>
-          <div class="toggle-group" id="position-toggles">
-            <button class="toggle active" data-value="1">一把位</button>
-            <button class="toggle" data-value="2">二把位</button>
-            <button class="toggle" data-value="3">三把位</button>
-          </div>
-        </div>
-        <div class="config-group">
-          <span class="config-label">弦</span>
-          <div class="toggle-group" id="string-toggles">
-            <button class="toggle active" data-value="G">G弦</button>
-            <button class="toggle active" data-value="D">D弦</button>
-            <button class="toggle active" data-value="A">A弦</button>
-            <button class="toggle active" data-value="E">E弦</button>
-          </div>
-        </div>
         <div class="config-group">
           <span class="config-label">音频</span>
           <button id="pick-audio-dir" class="toggle">选择本地音频文件夹</button>
@@ -69,15 +62,24 @@
       </div>
     </section>
 
-    <nav id="tabs">
-      <button class="tab active" data-mode="quiz">出题模式</button>
-      <button class="tab" data-mode="practice">练习模式</button>
-      <button class="tab" data-mode="realtime">实时反馈</button>
-    </nav>
-
     <main>
       <!-- Quiz Mode -->
       <div id="quiz-panel" class="panel active">
+        <div class="note-pool">
+          <div class="note-pool-head">
+            <span class="config-label">调</span>
+            <select id="key-tonic" class="rt-select"></select>
+            <div class="toggle-group" id="key-mode">
+              <button class="toggle active" data-mode="major">大调</button>
+              <button class="toggle" data-mode="minor">小调</button>
+            </div>
+            <span class="config-label">音符</span>
+            <button class="toggle" data-act="all">全选</button>
+            <button class="toggle" data-act="none">清空</button>
+          </div>
+          <div class="note-picker" id="quiz-note-picker"></div>
+        </div>
+
         <div class="quiz-type-row">
           <span class="config-label">题型</span>
           <select id="quiz-type">
@@ -174,6 +176,16 @@
 
       <!-- Practice Mode -->
       <div id="practice-panel" class="panel">
+        <div class="note-pool">
+          <div class="note-pool-head">
+            <span class="config-label">调</span>
+            <select id="practice-key-tonic" class="rt-select"></select>
+            <div class="toggle-group" id="practice-key-mode">
+              <button class="toggle active" data-mode="major">大调</button>
+              <button class="toggle" data-mode="minor">小调</button>
+            </div>
+          </div>
+        </div>
         <div id="note-palette" class="note-palette"></div>
         <div class="practice-display">
           <canvas id="practice-canvas" width="340" height="200"></canvas>
@@ -184,6 +196,8 @@
         </div>
       </div>
     </main>
+    </div>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

@@ -59,13 +59,14 @@ export function drawStaff(canvas: HTMLCanvasElement, note: Note | null, showNote
     }
   }
 
-  // Sharp accidental
-  if (note.name.includes('#')) {
+  // Accidental (sharp / flat). Note name is like "F#4" or "Eb5".
+  const accidental = note.name.includes('#') ? '♯' : note.name[1] === 'b' ? '♭' : '';
+  if (accidental) {
     ctx.fillStyle = '#1a1a1a';
     ctx.font = `${LINE_SPACING * 2}px "Bravura", "Bravura Text", "FreeSerif", "Symbola", serif`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
-    ctx.fillText('♯', noteX - 18, noteY);
+    ctx.fillText(accidental, noteX - 18, noteY);
   }
 
   // Note head (filled oval, slightly tilted)
