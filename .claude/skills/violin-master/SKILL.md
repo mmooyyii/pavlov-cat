@@ -21,14 +21,20 @@ description: 小提琴大师 — 讲解小提琴演奏技巧与乐理知识（�
 
 ### 1. 拿到音频
 
-用户给文件路径（把文件拖进终端即可）。没有录音时告诉他怎么录：
+**首选：现场录**（自带录音脚本，输出直接可分析的 44.1k 单声道 16-bit WAV）：
 
-- Mac：QuickTime Player → 文件 → 新建音频录制，存 .m4a
-- iPhone：语音备忘录录制后 AirDrop 到 Mac
+```bash
+swift .claude/skills/violin-master/scripts/record.swift [秒数] [输出.wav] [--device 名称] [--list]
+```
 
-支持 wav / m4a / mp3 / aac / caf / aiff。
+- 默认输出 `/tmp/violin_recording.wav`；默认选**内置麦克风**（蓝牙耳机麦音质差、闲置时录出来是静音）
+- 你代跑时**必须非沙箱执行**（沙箱里录到的是全零静音），且无 TTY 时固定时长（默认 15s），先和用户约好"我开始录后你拉 X 秒"
+- 用户自己跑体验更好（实时电平表 + Enter 停止）：让他输入 `! swift .claude/skills/violin-master/scripts/record.swift`
+- 首次运行 macOS 会弹麦克风授权，提醒用户点允许；录完若提示 near silence，用 `--list` 查设备、`--device` 换
 
-### 2. 统一转成 16-bit WAV（即使已是 wav 也转，避免 float-wav 兼容问题）
+**备选：用户给现成文件**（拖进终端），支持 wav / m4a / mp3 / aac / caf / aiff。
+
+### 2. 现成文件需统一转成 16-bit WAV（录音脚本的输出可跳过这步）
 
 ```bash
 afconvert -f WAVE -d LEI16@44100 -c 1 <输入文件> /tmp/violin_analysis.wav
