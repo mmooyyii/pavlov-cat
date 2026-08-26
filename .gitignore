@@ -12,5 +12,5 @@ yarn-error.log*
 .idea/*
 .vscode/*
 .claude/*
+!.claude/skills
 .idea
-.claude
