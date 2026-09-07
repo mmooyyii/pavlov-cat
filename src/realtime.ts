@@ -62,6 +62,10 @@ const MAX_CENTS_TOLERANCE = 100;
 // ── Types ───────────────────────────────────────────────────────────────────
 type TimeUnit = 'beat' | 'second';
 type SoundKind = 'wood' | 'click' | 'tom' | 'hihat';
+type ViewMode = 'practice' | 'tuner';
+
+// Violin open strings: G3, D4, A4, E5.
+const OPEN_STRINGS = [55, 62, 69, 76];
 
 // ── State ───────────────────────────────────────────────────────────────────
 const state = {
@@ -72,6 +76,7 @@ const state = {
   buffer: null as Float32Array<ArrayBuffer> | null,
 
   running: false,
+  viewMode: 'practice' as ViewMode,
   startTime: 0,                         // ctx.currentTime when started
   frozenElapsedBeats: 0,                // last elapsedBeats when stopped (for static display)
   bpm: 80,
@@ -140,6 +145,14 @@ const state = {
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
     pitchEl: HTMLElement;
+    modeTabs: NodeListOf<HTMLButtonElement>;
+    practiceView: HTMLElement;
+    tunerView: HTMLElement;
+    tunerNote: HTMLElement;
+    tunerCents: HTMLElement;
+    tunerNeedle: HTMLElement;
+    tunerStrings: NodeListOf<HTMLElement>;
+    tunerStartBtn: HTMLButtonElement;
   },
 };
 
@@ -608,6 +621,7 @@ function detectStep(): void {
   const f = detectPitch(buf, state.ctx.sampleRate);
   histPush(state.ctx.currentTime, f, rms);
   updatePitchReadout(f);
+  if (state.viewMode === 'tuner') updateTuner(f);
   scheduleMetronome();
 }
 
@@ -839,10 +853,71 @@ function setStatus(msg: string): void {
 
 function updateStartBtn(): void {
   if (!state.els) return;
-  if (state.running) state.els.startBtn.textContent = '⏸ 暂停';
-  else if (state.ctx) state.els.startBtn.textContent = '▶ 继续';
-  else state.els.startBtn.textContent = '▶ 开始';
+  let label: string;
+  if (state.running) label = '⏸ 暂停';
+  else if (state.ctx) label = '▶ 继续';
+  else label = '▶ 开始';
+  state.els.startBtn.textContent = label;
+  // Tuner has its own start button; when tuning, "暂停" reads oddly, so show 停止.
+  state.els.tunerStartBtn.textContent = state.running ? '⏸ 停止' : (state.ctx ? '▶ 继续' : '▶ 开始');
   state.refreshPanCursor?.();
+}
+
+// ── Tuner view ───────────────────────────────────────────────────────────────
+// Big single-note tuner for tuning the open strings. Shows the nearest note,
+// how many cents off, a needle, and which of G/D/A/E you're closest to.
+function updateTuner(freq: number): void {
+  if (!state.els) return;
+  const { tunerNote, tunerCents, tunerNeedle, tunerStrings } = state.els;
+  if (freq <= 0) {
+    tunerNote.textContent = '—';
+    tunerCents.textContent = '拉一个音…';
+    tunerCents.className = 'tuner-cents';
+    tunerNeedle.style.left = '50%';
+    tunerNeedle.className = 'tuner-needle';
+    tunerStrings.forEach(s => s.classList.remove('active'));
+    return;
+  }
+  const midi = freqToMidi(freq);
+  const nearest = Math.round(midi);
+  const cents = Math.round((midi - nearest) * 100);
+  tunerNote.textContent = midiToNoteName(nearest);
+
+  const absC = Math.abs(cents);
+  const band = absC <= state.centsToleranceGood ? 'good'
+    : absC <= state.centsToleranceMed ? 'med' : 'bad';
+  const word = absC <= state.centsToleranceGood ? '准 ✓'
+    : cents < 0 ? `偏低 ${cents}¢ · 调紧一点` : `偏高 +${cents}¢ · 调松一点`;
+  tunerCents.textContent = word;
+  tunerCents.className = `tuner-cents ${band}`;
+
+  // Needle: map ±50¢ across the bar width.
+  const pct = Math.max(0, Math.min(100, 50 + Math.max(-50, Math.min(50, cents))));
+  tunerNeedle.style.left = `${pct}%`;
+  tunerNeedle.className = `tuner-needle ${band}`;
+
+  // Highlight nearest open string.
+  let nearestStr = OPEN_STRINGS[0];
+  for (const s of OPEN_STRINGS) if (Math.abs(midi - s) < Math.abs(midi - nearestStr)) nearestStr = s;
+  tunerStrings.forEach(el => {
+    el.classList.toggle('active', Number(el.dataset.midi) === nearestStr);
+  });
+}
+
+// Switch between the practice scope and the tuner. Entering the tuner starts
+// the mic automatically so a beginner just sees a working tuner.
+function setViewMode(mode: ViewMode): void {
+  if (!state.els) return;
+  state.viewMode = mode;
+  state.els.modeTabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  state.els.practiceView.classList.toggle('hidden', mode !== 'practice');
+  state.els.tunerView.classList.toggle('hidden', mode !== 'tuner');
+  if (mode === 'tuner') {
+    if (!state.running && !state.ctx) {
+      void start().then(() => { if (!state.running) state.els!.tunerCents.textContent = '无法访问麦克风,请检查权限或设备'; });
+    }
+    resizeCanvas();
+  }
 }
 
 // Cycle through the three button states: idle → running → paused → running …
@@ -893,6 +968,14 @@ export function initRealtime(): void {
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
+    modeTabs: document.querySelectorAll<HTMLButtonElement>('#mode-tabs .mode-tab'),
+    practiceView: document.getElementById('practice-view') as HTMLElement,
+    tunerView: document.getElementById('tuner-view') as HTMLElement,
+    tunerNote: document.getElementById('tuner-note') as HTMLElement,
+    tunerCents: document.getElementById('tuner-cents') as HTMLElement,
+    tunerNeedle: document.getElementById('tuner-needle') as HTMLElement,
+    tunerStrings: document.querySelectorAll<HTMLElement>('#tuner-strings .tuner-string'),
+    tunerStartBtn: document.getElementById('tuner-start') as HTMLButtonElement,
   };
 
   const rangeOptionsHtml: string[] = [];
@@ -1037,6 +1120,11 @@ export function initRealtime(): void {
 
   state.els.startBtn.addEventListener('click', togglePlayPause);
   state.els.clearBtn.addEventListener('click', clearData);
+  state.els.tunerStartBtn.addEventListener('click', togglePlayPause);
+
+  state.els.modeTabs.forEach(tab => {
+    tab.addEventListener('click', () => setViewMode(tab.dataset.mode as ViewMode));
+  });
 
   state.els.fullscreenBtn.addEventListener('click', toggleFullscreen);
 

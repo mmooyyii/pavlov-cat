@@ -52,6 +52,145 @@ header h1 {
   white-space: nowrap;
 }
 
+.hidden { display: none !important; }
+
+/* Mode tabs (练习 / 调弦) */
+.mode-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.mode-tab {
+  padding: 6px 20px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Tuner view */
+.tuner-card {
+  max-width: 520px;
+  margin: 24px auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px 22px;
+  text-align: center;
+}
+
+.tuner-note {
+  font-size: 5rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tuner-cents {
+  margin-top: 6px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  min-height: 1.4em;
+  color: var(--muted);
+}
+
+.tuner-cents.good { color: var(--success); }
+.tuner-cents.med  { color: #c99a2e; }
+.tuner-cents.bad  { color: var(--danger); }
+
+.tuner-bar {
+  position: relative;
+  height: 26px;
+  margin: 18px 0 6px;
+  background: linear-gradient(90deg,
+    rgba(192,57,43,0.18), rgba(201,154,46,0.18) 35%,
+    rgba(39,174,96,0.28) 50%,
+    rgba(201,154,46,0.18) 65%, rgba(192,57,43,0.18));
+  border: 1px solid var(--border);
+  border-radius: 13px;
+}
+
+.tuner-center {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--accent);
+  transform: translateX(-1px);
+}
+
+.tuner-needle {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  left: 50%;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--muted);
+  transform: translateX(-2px);
+  transition: left 0.06s linear, background 0.1s;
+}
+
+.tuner-needle.good { background: var(--success); }
+.tuner-needle.med  { background: #c99a2e; }
+.tuner-needle.bad  { background: var(--danger); }
+
+.tuner-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.tuner-strings {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.tuner-string {
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.tuner-string.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.tuner-start { margin-top: 4px; }
+
+.tuner-hint {
+  margin-top: 14px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .toggle-group {
   display: flex;
   gap: 4px;

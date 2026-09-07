@@ -29,9 +29,14 @@
         </svg>
         <h1>Pavlov Cat</h1>
       </div>
+      <div class="mode-tabs" id="mode-tabs">
+        <button class="mode-tab active" data-mode="practice">练习</button>
+        <button class="mode-tab" data-mode="tuner">调弦</button>
+      </div>
     </header>
 
     <main>
+      <div id="practice-view">
       <div id="realtime-panel">
         <div class="rt-controls">
           <div class="rt-control">
@@ -113,6 +118,29 @@
         <div class="rt-readout">
           <span id="rt-pitch" class="rt-pitch">— Hz</span>
           <span id="rt-status" class="rt-status"></span>
+        </div>
+      </div>
+      </div>
+
+      <div id="tuner-view" class="hidden">
+        <div class="tuner-card">
+          <div class="tuner-note" id="tuner-note">—</div>
+          <div class="tuner-cents" id="tuner-cents">按「开始」并拉一个空弦</div>
+          <div class="tuner-bar">
+            <div class="tuner-center"></div>
+            <div class="tuner-needle" id="tuner-needle"></div>
+          </div>
+          <div class="tuner-scale">
+            <span>偏低 ♭</span><span>准</span><span>偏高 ♯</span>
+          </div>
+          <div class="tuner-strings" id="tuner-strings">
+            <span class="tuner-string" data-midi="55">G</span>
+            <span class="tuner-string" data-midi="62">D</span>
+            <span class="tuner-string" data-midi="69">A</span>
+            <span class="tuner-string" data-midi="76">E</span>
+          </div>
+          <button id="tuner-start" class="rt-overlay-btn rt-overlay-btn-primary tuner-start">▶ 开始</button>
+          <p class="tuner-hint">拉空弦,让指针停在正中间。偏左=音偏低(把弦调紧一点),偏右=音偏高(调松一点)。基准 A4 = 442 Hz。</p>
         </div>
       </div>
     </main>
