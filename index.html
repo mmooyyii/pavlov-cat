@@ -40,6 +40,22 @@
       <div id="realtime-panel">
         <div class="rt-controls">
           <div class="rt-control">
+            <span class="config-label">参考方式</span>
+            <div class="toggle-group" id="rt-refmode-toggles">
+              <button class="toggle active" data-value="chromatic">半音阶</button>
+              <button class="toggle" data-value="scale">跟音阶</button>
+            </div>
+          </div>
+          <div class="rt-control" id="rt-scale-controls">
+            <span class="config-label">调</span>
+            <select id="rt-key" class="rt-select"></select>
+            <span class="config-label">音准标准</span>
+            <div class="toggle-group" id="rt-temperament-toggles" title="标准=平均律,通用;更协和=纯律,某些音更贴合和声、更干净。不确定就用标准。">
+              <button class="toggle active" data-value="equal">标准</button>
+              <button class="toggle" data-value="just">更协和</button>
+            </div>
+          </div>
+          <div class="rt-control">
             <span class="config-label">音域</span>
             <select id="rt-range-lo" class="rt-select"></select>
             <span class="rt-range-sep">–</span>

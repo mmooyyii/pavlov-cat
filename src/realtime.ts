@@ -1,5 +1,8 @@
 import { detectPitch } from './pitch';
-import { freqToMidi, midiToFreq, midiToNoteName } from './music';
+import {
+  A4_HZ, freqToMidi, midiToFreq, midiToNoteName,
+  COMMON_KEYS, isInScale, targetFreq, type Key, type Temperament,
+} from './music';
 import { Drone, type DroneMode } from './drone';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -25,17 +28,49 @@ const DEFAULT_LO_MIDI = 55;        // G3 — covers full 1st position
 const DEFAULT_HI_MIDI = 79;        // G5
 
 interface RefNote {
+  midi: number;
   name: string;
-  frequency: number;
+  frequency: number;   // ideal frequency (equal- or just-tempered)
+  target: boolean;     // true = a note the player should aim for / be judged against
 }
 
-function refNotesForRange(loMidi: number, hiMidi: number): RefNote[] {
-  if (hiMidi < loMidi) [loMidi, hiMidi] = [hiMidi, loMidi];
-  const result: RefNote[] = [];
-  for (let m = loMidi; m <= hiMidi; m++) {
-    result.push({ name: midiToNoteName(m), frequency: midiToFreq(m) });
+type RefMode = 'chromatic' | 'scale';
+
+function currentKey(): Key {
+  const k = COMMON_KEYS[state.keyIndex] ?? COMMON_KEYS[0];
+  return { tonicPc: k.tonicPc, mode: k.mode, temperament: state.temperament, a4: A4_HZ };
+}
+
+// Reference lanes for the current range and mode. In chromatic mode every
+// semitone is a target. In scale mode only the key's scale tones are targets
+// (drawn bright + labelled and judged against, with the chosen temperament);
+// the rest become faint guide lines.
+function buildRefNotes(): RefNote[] {
+  let lo = Math.min(state.loMidi, state.hiMidi);
+  let hi = Math.max(state.loMidi, state.hiMidi);
+  const out: RefNote[] = [];
+  if (state.refMode === 'chromatic') {
+    for (let m = lo; m <= hi; m++) {
+      out.push({ midi: m, name: midiToNoteName(m), frequency: midiToFreq(m), target: true });
+    }
+  } else {
+    const key = currentKey();
+    for (let m = lo; m <= hi; m++) {
+      const t = isInScale(m, key);
+      out.push({ midi: m, name: midiToNoteName(m), frequency: t ? targetFreq(m, key) : midiToFreq(m), target: t });
+    }
   }
-  return result;
+  return out;
+}
+
+function refreshRefNotes(): void {
+  state.rangeNotes = buildRefNotes();
+}
+
+// A low, unobtrusive octave of the current key's tonic, for the drone.
+function tonicDroneMidi(): number {
+  const k = COMMON_KEYS[state.keyIndex] ?? COMMON_KEYS[0];
+  return k.tonicPc + 48; // C3..B3
 }
 
 // ── Palette ─────────────────────────────────────────────────────────────────
@@ -43,7 +78,9 @@ const PALETTE = {
   bgTop:        '#1d2128',
   bgBottom:     '#14161b',
   refLine:      '#2c333d',
+  refLineFaint: '#20262e',  // non-scale guide lines in scale mode
   refLabel:     '#7eb4cf',  // soft cool blue
+  refLabelTgt:  '#8ad0a0',  // scale target labels — soft green
   gridAccent:   '#3e2f1a',  // warm dark amber
   gridRegular:  '#22272d',  // cool dark gray
   labelAccent:  '#d4a96a',  // warm gold
@@ -90,6 +127,11 @@ const state = {
   soundKind: 'tom' as SoundKind,
   noiseBuffer: null as AudioBuffer | null,    // shared white-noise source for hihat
 
+  // Reference mode: chromatic lanes vs a chosen scale/key
+  refMode: 'chromatic' as RefMode,
+  keyIndex: 0,                          // index into COMMON_KEYS
+  temperament: 'equal' as Temperament,
+
   // Reference drone (sustained tone to tune against)
   drone: null as Drone | null,
   droneMode: 'off' as DroneMode,
@@ -134,6 +176,10 @@ const state = {
     soundSelect: HTMLSelectElement;
     rangeLoSelect: HTMLSelectElement;
     rangeHiSelect: HTMLSelectElement;
+    refModeToggles: NodeListOf<HTMLButtonElement>;
+    scaleControls: HTMLElement;
+    keySelect: HTMLSelectElement;
+    temperamentToggles: NodeListOf<HTMLButtonElement>;
     metronomeToggles: NodeListOf<HTMLButtonElement>;
     judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
@@ -195,6 +241,9 @@ function loadSettings(): void {
   if (typeof data.droneMode === 'string' && DRONE_MODES.includes(data.droneMode as DroneMode)) state.droneMode = data.droneMode as DroneMode;
   if ('droneRootMidi' in data) state.droneRootMidi = clampInt(data.droneRootMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.droneRootMidi);
   if (typeof data.micDeviceId === 'string') state.micDeviceId = data.micDeviceId;
+  if (data.refMode === 'chromatic' || data.refMode === 'scale') state.refMode = data.refMode;
+  if ('keyIndex' in data) state.keyIndex = clampInt(data.keyIndex, 0, COMMON_KEYS.length - 1, 0);
+  if (data.temperament === 'equal' || data.temperament === 'just') state.temperament = data.temperament;
 }
 
 function saveSettings(): void {
@@ -214,6 +263,9 @@ function saveSettings(): void {
       droneMode: state.droneMode,
       droneRootMidi: state.droneRootMidi,
       micDeviceId: state.micDeviceId,
+      refMode: state.refMode,
+      keyIndex: state.keyIndex,
+      temperament: state.temperament,
     }));
   } catch { /* quota / private mode — ignore */ }
 }
@@ -685,8 +737,10 @@ function drawOnce(): void {
   const beatToX = (b: number): number =>
     playheadX + (b - elapsedBeats) * pxPerBeat;
 
-  // Reference lanes: line per semitone, label per natural. Skipping sharp
-  // labels keeps wide chromatic ranges legible without losing the line.
+  // Reference lanes. Chromatic mode: a line per semitone, labels on naturals.
+  // Scale mode: scale tones are bright + labelled (with octave), non-scale
+  // tones fade to faint guide lines so the target notes stand out.
+  const scaleMode = state.refMode === 'scale';
   ctx2d.lineWidth = 1;
   ctx2d.font = `${fontMd}px system-ui, sans-serif`;
   ctx2d.textBaseline = 'middle';
@@ -694,12 +748,24 @@ function drawOnce(): void {
   for (const n of refNotes) {
     const y = midiToY(freqToMidi(n.frequency));
     const isSharp = n.name.includes('#');
+    if (scaleMode && !n.target) {
+      ctx2d.strokeStyle = PALETTE.refLineFaint;
+      ctx2d.beginPath();
+      ctx2d.moveTo(leftMargin, y);
+      ctx2d.lineTo(W, y);
+      ctx2d.stroke();
+      continue;
+    }
     ctx2d.strokeStyle = PALETTE.refLine;
     ctx2d.beginPath();
     ctx2d.moveTo(leftMargin, y);
     ctx2d.lineTo(W, y);
     ctx2d.stroke();
-    if (!isSharp) {
+    // Chromatic mode labels naturals only; scale mode labels every scale tone.
+    if (scaleMode) {
+      ctx2d.fillStyle = PALETTE.refLabelTgt;
+      ctx2d.fillText(n.name, leftMargin - 4, y);
+    } else if (!isSharp) {
       ctx2d.fillStyle = PALETTE.refLabel;
       ctx2d.fillText(n.name, leftMargin - 4, y);
     }
@@ -772,8 +838,10 @@ function drawOnce(): void {
     { color: PALETTE.traceBad,   path: new Path2D() },
     { color: PALETTE.traceNoRef, path: new Path2D() },
   ];
+  // Judge only against target notes (all notes in chromatic mode; scale tones
+  // in scale mode) so trace colour reflects the scale the player is practising.
   const refFreqs: number[] = [];
-  for (const n of refNotes) refFreqs.push(n.frequency);
+  for (const n of refNotes) if (n.target) refFreqs.push(n.frequency);
   const hasRef = refFreqs.length > 0;
 
   const pickBucket = (f: number): number => {
@@ -957,6 +1025,10 @@ export function initRealtime(): void {
     soundSelect: document.getElementById('rt-sound') as HTMLSelectElement,
     rangeLoSelect: document.getElementById('rt-range-lo') as HTMLSelectElement,
     rangeHiSelect: document.getElementById('rt-range-hi') as HTMLSelectElement,
+    refModeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-refmode-toggles .toggle'),
+    scaleControls: document.getElementById('rt-scale-controls') as HTMLElement,
+    keySelect: document.getElementById('rt-key') as HTMLSelectElement,
+    temperamentToggles: document.querySelectorAll<HTMLButtonElement>('#rt-temperament-toggles .toggle'),
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
@@ -986,7 +1058,7 @@ export function initRealtime(): void {
   state.els.rangeHiSelect.innerHTML = rangeOptionsHtml.join('');
   state.els.rangeLoSelect.value = String(state.loMidi);
   state.els.rangeHiSelect.value = String(state.hiMidi);
-  state.rangeNotes = refNotesForRange(state.loMidi, state.hiMidi);
+  refreshRefNotes();
 
   const onRangeChange = (): void => {
     let lo = Number(state.els!.rangeLoSelect.value);
@@ -996,12 +1068,57 @@ export function initRealtime(): void {
     state.hiMidi = hi;
     state.els!.rangeLoSelect.value = String(lo);
     state.els!.rangeHiSelect.value = String(hi);
-    state.rangeNotes = refNotesForRange(lo, hi);
+    refreshRefNotes();
     saveSettings();
     drawOnce();
   };
   state.els.rangeLoSelect.addEventListener('change', onRangeChange);
   state.els.rangeHiSelect.addEventListener('change', onRangeChange);
+
+  // Reference mode (chromatic vs scale), key, and temperament.
+  state.els.keySelect.innerHTML = COMMON_KEYS
+    .map((k, i) => `<option value="${i}">${k.label}</option>`).join('');
+  state.els.keySelect.value = String(state.keyIndex);
+
+  const syncScaleUi = (): void => {
+    state.els!.scaleControls.classList.toggle('hidden', state.refMode !== 'scale');
+  };
+  syncScaleUi();
+
+  state.els.refModeToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === state.refMode);
+    btn.addEventListener('click', () => {
+      state.refMode = btn.dataset.value as RefMode;
+      state.els!.refModeToggles.forEach(b => b.classList.toggle('active', b === btn));
+      syncScaleUi();
+      refreshRefNotes();
+      saveSettings();
+      drawOnce();
+    });
+  });
+
+  state.els.keySelect.addEventListener('change', () => {
+    state.keyIndex = Number(state.els!.keySelect.value) || 0;
+    // Follow the tonic with the drone so "跟音阶" + "参考音" line up automatically.
+    state.droneRootMidi = tonicDroneMidi();
+    state.els!.droneRootSelect.value = String(state.droneRootMidi);
+    refreshRefNotes();
+    saveSettings();
+    if (state.droneMode !== 'off') void applyDrone();
+    drawOnce();
+  });
+
+  state.els.temperamentToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === state.temperament);
+    btn.addEventListener('click', () => {
+      state.temperament = btn.dataset.value as Temperament;
+      state.els!.temperamentToggles.forEach(b => b.classList.toggle('active', b === btn));
+      refreshRefNotes();
+      saveSettings();
+      if (state.droneMode !== 'off') void applyDrone();
+      drawOnce();
+    });
+  });
 
   state.els.bpmInput.value = String(state.bpm);
   state.els.bpmInput.addEventListener('change', () => {
