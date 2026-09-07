@@ -167,6 +167,11 @@ const state = {
   // Microphone input device (Mac mini has no built-in mic → pick iPhone etc.)
   micDeviceId: null as string | null,
 
+  // Audio recording (download a take to keep / send to a teacher)
+  recorder: null as MediaRecorder | null,
+  recChunks: [] as Blob[],
+  recording: false,
+
   // Pan when stopped: displayed elapsed = frozenElapsedBeats + viewOffsetBeats.
   // Clamped so the playhead stays inside [0, frozenElapsedBeats].
   viewOffsetBeats: 0,
@@ -217,6 +222,8 @@ const state = {
     micSelect: HTMLSelectElement;
     startBtn: HTMLButtonElement;
     clearBtn: HTMLButtonElement;
+    exportBtn: HTMLButtonElement;
+    recordBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
     pitchEl: HTMLElement;
@@ -721,6 +728,7 @@ async function teardown(): Promise<void> {
   if (state.detectId) { clearInterval(state.detectId as ReturnType<typeof setInterval>); state.detectId = 0; }
   if (state.rafId) { cancelAnimationFrame(state.rafId); state.rafId = 0; }
 
+  if (state.recording) { try { state.recorder?.stop(); } catch { /* */ } }
   try { state.micSource?.disconnect(); } catch { /* */ }
   try { state.analyser?.disconnect(); } catch { /* */ }
   state.micStream?.getTracks().forEach(t => t.stop());
@@ -1247,6 +1255,8 @@ export function initRealtime(): void {
     micSelect: document.getElementById('rt-mic') as HTMLSelectElement,
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     clearBtn: document.getElementById('rt-clear') as HTMLButtonElement,
+    exportBtn: document.getElementById('rt-export') as HTMLButtonElement,
+    recordBtn: document.getElementById('rt-record') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
@@ -1458,6 +1468,8 @@ export function initRealtime(): void {
 
   state.els.startBtn.addEventListener('click', togglePlayPause);
   state.els.clearBtn.addEventListener('click', clearData);
+  state.els.exportBtn.addEventListener('click', exportPng);
+  state.els.recordBtn.addEventListener('click', () => { void toggleRecord(); });
   state.els.tunerStartBtn.addEventListener('click', togglePlayPause);
 
   state.els.modeTabs.forEach(tab => {
@@ -1538,6 +1550,75 @@ function setupPan(canvas: HTMLCanvasElement): void {
 
   // Expose the cursor refresher so start()/stop() can flip it.
   state.refreshPanCursor = updateCursor;
+}
+
+// ── Export & recording ───────────────────────────────────────────────────────
+function timestamp(): string {
+  const d = new Date();
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Save the current scope (pitch trail + targets) as a PNG to show a teacher.
+function exportPng(): void {
+  if (!state.els) return;
+  state.els.canvas.toBlob(blob => {
+    if (blob) downloadBlob(blob, `pavlov-cat-${timestamp()}.png`);
+  }, 'image/png');
+}
+
+function pickRecMime(): string {
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+  for (const t of types) if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) return t;
+  return '';
+}
+
+function updateRecordBtn(): void {
+  if (state.els) state.els.recordBtn.textContent = state.recording ? '⏹ 停止录音' : '🎙 录音';
+}
+
+// Record the raw microphone (just the playing, not metronome/drone) to a file.
+async function toggleRecord(): Promise<void> {
+  if (state.recording) {
+    state.recorder?.stop();
+    return;
+  }
+  if (!state.running) await start();      // recording needs a live mic
+  if (!state.micStream) { setStatus('无法录音:麦克风未就绪'); return; }
+
+  const mime = pickRecMime();
+  let rec: MediaRecorder;
+  try {
+    rec = new MediaRecorder(state.micStream, mime ? { mimeType: mime } : undefined);
+  } catch {
+    setStatus('当前浏览器不支持录音');
+    return;
+  }
+  state.recorder = rec;
+  state.recChunks = [];
+  rec.ondataavailable = e => { if (e.data.size > 0) state.recChunks.push(e.data); };
+  rec.onstop = () => {
+    state.recording = false;
+    updateRecordBtn();
+    if (!state.recChunks.length) return;
+    const type = rec.mimeType || 'audio/webm';
+    const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+    downloadBlob(new Blob(state.recChunks, { type }), `pavlov-cat-${timestamp()}.${ext}`);
+    state.recChunks = [];
+  };
+  rec.start();
+  state.recording = true;
+  updateRecordBtn();
+  setStatus('录音中…');
 }
 
 function toggleFullscreen(): void {
