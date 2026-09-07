@@ -951,8 +951,12 @@ function drawOnce(): void {
       ctx2d.lineWidth = 1;
       const yy = y - blockH / 2;
       ctx2d.beginPath();
-      const r = Math.min(4, blockH / 2, w / 2);
-      ctx2d.roundRect(left, yy, w, blockH, r);
+      // roundRect is missing on older Safari (< 16) — fall back to plain rect.
+      if (typeof ctx2d.roundRect === 'function') {
+        ctx2d.roundRect(left, yy, w, blockH, Math.min(4, blockH / 2, w / 2));
+      } else {
+        ctx2d.rect(left, yy, w, blockH);
+      }
       ctx2d.fill();
       ctx2d.stroke();
       if (w > 22 * scale) {
@@ -1548,12 +1552,13 @@ export function initRealtime(): void {
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
   document.addEventListener('fullscreenchange', resizeCanvas);
+  document.addEventListener('webkitfullscreenchange' as keyof DocumentEventMap, resizeCanvas);
 
   // Fullscreen-only shortcuts: Space toggles play/pause (preserving the
   // trail), K clears the trail. Scoped to fullscreen so they don't hijack
   // typing in BPM/accent inputs elsewhere on the page.
   document.addEventListener('keydown', (e) => {
-    if (document.fullscreenElement !== state.els?.wrap) return;
+    if (fullscreenElement() !== state.els?.wrap) return;
     if (e.code === 'Space') {
       e.preventDefault();
       togglePlayPause();
@@ -1731,14 +1736,28 @@ async function calibrateLatency(): Promise<void> {
   setStatus(`已校准:麦克风延迟约 ${Math.round(state.micLatency * 1000)}ms`);
 }
 
+// Fullscreen with webkit fallbacks (older macOS Safari exposes only the
+// prefixed API; some Android WebViews expose neither).
+type WebkitDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => void };
+type WebkitEl = HTMLElement & { webkitRequestFullscreen?: () => void };
+
+function fullscreenElement(): Element | null {
+  return document.fullscreenElement ?? (document as WebkitDoc).webkitFullscreenElement ?? null;
+}
+
 function toggleFullscreen(): void {
   if (!state.els) return;
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => { /* ignore */ });
+  const doc = document as WebkitDoc;
+  const wrap = state.els.wrap as WebkitEl;
+  if (fullscreenElement()) {
+    if (document.exitFullscreen) document.exitFullscreen().catch(() => { /* ignore */ });
+    else doc.webkitExitFullscreen?.();
+  } else if (wrap.requestFullscreen) {
+    wrap.requestFullscreen().catch(() => setStatus('当前浏览器不支持全屏'));
+  } else if (wrap.webkitRequestFullscreen) {
+    wrap.webkitRequestFullscreen();
   } else {
-    state.els.wrap.requestFullscreen().catch(() => {
-      setStatus('当前浏览器不支持全屏');
-    });
+    setStatus('当前浏览器不支持全屏');
   }
 }
 

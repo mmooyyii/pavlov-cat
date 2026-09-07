@@ -140,6 +140,22 @@
             <span class="config-label">节奏</span>
             <button id="rt-calibrate" class="rt-mini-btn" title="播放节拍声测量麦克风延迟,让节奏评分更准(需让麦克风能听到音箱声)">校准延迟</button>
           </div>
+          <details class="rt-help">
+            <summary>没有麦克风 / 换设备收音?</summary>
+            <p class="rt-help-sub">Mac(无内置麦)用 iPhone 收音:</p>
+            <ol>
+              <li>Mac 与 iPhone 登录同一 Apple ID,都打开 Wi-Fi 和蓝牙并靠近(macOS Ventura+、iOS 16+)。</li>
+              <li>iPhone:设置 → 通用 → 隔空播放与接力 → 打开「连续互通相机」(这一项同时管麦克风)。</li>
+              <li>回到本页点一次「▶ 开始」授权麦克风 —— 上方「麦克风」下拉会出现"xxx 的 iPhone 麦克风",检测到会自动选中,也可手动选。或在 系统设置 → 声音 → 输入 里固定选 iPhone。</li>
+              <li>iPhone 无线收音延迟较大:要看节奏评分,先点一次「校准延迟」(需让 iPhone 能听到电脑音箱的节拍声)。</li>
+            </ol>
+            <p class="rt-help-sub">安卓平板 / 手机:</p>
+            <ol>
+              <li>直接用平板浏览器(推荐 Chrome)打开本页,点「▶ 开始」后在弹窗里允许使用麦克风,自带麦克风即可收音。</li>
+              <li>外接 USB / 蓝牙麦克风后,可在上方「麦克风」下拉里切换;蓝牙麦克风延迟大,建议同样先「校准延迟」。</li>
+              <li>提示:浏览器只在 https(或 localhost)下允许用麦克风,局域网 IP 直接访问会拿不到权限。</li>
+            </ol>
+          </details>
         </div>
         </details>
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">

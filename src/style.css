@@ -395,6 +395,33 @@ header h1 {
 }
 .rt-mini-btn:hover { border-color: var(--accent); }
 
+/* Unobtrusive inline help (mic setup for iPhone continuity / Android tablets) */
+.rt-help {
+  flex: 1 1 100%;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rt-help > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  opacity: 0.75;
+}
+.rt-help > summary::-webkit-details-marker { display: none; }
+.rt-help > summary::before { content: 'ⓘ '; }
+.rt-help > summary:hover { opacity: 1; color: var(--accent); }
+
+.rt-help[open] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.rt-help-sub { font-weight: 700; margin: 6px 0 2px; }
+.rt-help ol { margin: 0 0 4px; padding-left: 18px; line-height: 1.55; }
+
 .rt-canvas-wrap {
   position: relative;
   background: #1d2128;
@@ -493,6 +520,19 @@ header h1 {
   top: 14px;
   left: 14px;
 }
+
+/* Safari-prefixed fullscreen — keep as separate blocks: a selector list with an
+   unknown pseudo-class would invalidate the whole rule. */
+.rt-canvas-wrap:-webkit-full-screen {
+  height: 100vh;
+  width: 100vw;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+}
+
+.rt-canvas-wrap:-webkit-full-screen .rt-fullscreen-btn { top: 14px; right: 14px; }
+.rt-canvas-wrap:-webkit-full-screen .rt-canvas-actions { top: 14px; left: 14px; }
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 @media (max-width: 680px) {
