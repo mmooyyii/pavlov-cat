@@ -2,8 +2,12 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Pavlov Cat</title>
+  <meta name="theme-color" content="#5a7a5a" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -38,6 +42,8 @@
     <main>
       <div id="practice-view">
       <div id="realtime-panel">
+        <details class="rt-settings" open>
+          <summary>⚙ 设置</summary>
         <div class="rt-controls">
           <div class="rt-control">
             <span class="config-label">参考方式</span>
@@ -131,6 +137,7 @@
             <select id="rt-mic" class="rt-select" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
           </div>
         </div>
+        </details>
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">
           <canvas id="realtime-canvas"></canvas>
           <div class="rt-canvas-actions">

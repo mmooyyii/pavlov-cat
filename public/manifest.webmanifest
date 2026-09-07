@@ -1,0 +1,15 @@
+{
+  "name": "Pavlov Cat 小提琴练习",
+  "short_name": "Pavlov Cat",
+  "description": "小提琴实时音准反馈:调弦、跟音阶、跟乐谱练习(A4=442)",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "zh",
+  "background_color": "#f5f4ef",
+  "theme_color": "#5a7a5a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

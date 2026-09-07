@@ -215,6 +215,25 @@ header h1 {
 }
 
 /* Realtime panel */
+.rt-settings {
+  margin-bottom: 10px;
+}
+
+.rt-settings > summary {
+  list-style: none;
+  cursor: pointer;
+  display: none;                 /* desktop: settings always visible */
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+  user-select: none;
+}
+.rt-settings > summary::-webkit-details-marker { display: none; }
+
 .rt-controls {
   display: flex;
   flex-wrap: wrap;
@@ -224,8 +243,8 @@ header h1 {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 14px;
-  margin-bottom: 10px;
 }
+.rt-settings > summary + .rt-controls { margin-top: 8px; }
 
 .rt-control {
   display: flex;
@@ -458,4 +477,33 @@ header h1 {
 .rt-canvas-wrap:fullscreen .rt-canvas-actions {
   top: 14px;
   left: 14px;
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────────────── */
+@media (max-width: 680px) {
+  #app { padding: 10px 12px; }
+  header h1 { font-size: 1.25rem; }
+
+  /* Collapse settings behind the ⚙ summary; tap to expand. */
+  .rt-settings > summary { display: block; }
+  .rt-settings:not([open]) > summary { margin-bottom: 0; }
+
+  .rt-controls {
+    gap: 10px 14px;
+  }
+  /* Each control on its own row for thumb-friendly tapping. */
+  .rt-control {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+  .rt-select, #rt-bpm, #rt-accent, #rt-visible-beats,
+  #rt-cents-good, #rt-cents-med { min-height: 36px; }
+
+  .rt-canvas-wrap { height: 52vh; min-height: 300px; }
+
+  .rt-canvas-actions { flex-wrap: wrap; max-width: calc(100% - 54px); }
+  .rt-overlay-btn { height: 30px; padding: 0 9px; font-size: 0.82rem; }
+
+  .tuner-note { font-size: 4rem; }
+  .tuner-card { margin: 12px auto; padding: 20px 16px 18px; }
 }
