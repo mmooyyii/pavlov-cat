@@ -5,7 +5,7 @@ import {
   type TargetNote, type TargetTrack,
 } from './music';
 import { Drone, type DroneMode } from './drone';
-import { analyze, type CentsEntry, type Report } from './report';
+import { analyze, analyzeRhythm, type CentsEntry, type Report } from './report';
 import { parseMusicXml } from './musicxml';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -172,6 +172,10 @@ const state = {
   recChunks: [] as Blob[],
   recording: false,
 
+  // Mic latency (s) between a note sounding and being detected — for rhythm.
+  micLatency: 0,
+  calibrating: false,
+
   // Pan when stopped: displayed elapsed = frozenElapsedBeats + viewOffsetBeats.
   // Clamped so the playhead stays inside [0, frozenElapsedBeats].
   viewOffsetBeats: 0,
@@ -224,6 +228,7 @@ const state = {
     clearBtn: HTMLButtonElement;
     exportBtn: HTMLButtonElement;
     recordBtn: HTMLButtonElement;
+    calibrateBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
     pitchEl: HTMLElement;
@@ -278,9 +283,10 @@ function loadSettings(): void {
   if (typeof data.droneMode === 'string' && DRONE_MODES.includes(data.droneMode as DroneMode)) state.droneMode = data.droneMode as DroneMode;
   if ('droneRootMidi' in data) state.droneRootMidi = clampInt(data.droneRootMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.droneRootMidi);
   if (typeof data.micDeviceId === 'string') state.micDeviceId = data.micDeviceId;
-  if (data.refMode === 'chromatic' || data.refMode === 'scale') state.refMode = data.refMode;
+  if (data.refMode === 'chromatic' || data.refMode === 'scale' || data.refMode === 'score') state.refMode = data.refMode;
   if ('keyIndex' in data) state.keyIndex = clampInt(data.keyIndex, 0, COMMON_KEYS.length - 1, 0);
   if (data.temperament === 'equal' || data.temperament === 'just') state.temperament = data.temperament;
+  if (typeof data.micLatency === 'number' && data.micLatency >= 0 && data.micLatency <= 0.5) state.micLatency = data.micLatency;
 }
 
 function saveSettings(): void {
@@ -303,6 +309,7 @@ function saveSettings(): void {
       refMode: state.refMode,
       keyIndex: state.keyIndex,
       temperament: state.temperament,
+      micLatency: state.micLatency,
     }));
   } catch { /* quota / private mode — ignore */ }
 }
@@ -1110,6 +1117,51 @@ function computeReport(): Report | null {
   return analyze(entries, state.centsToleranceGood, state.centsToleranceMed);
 }
 
+// Approximate rhythm timing. Detect note onsets (note-change transitions above
+// a volume floor), then measure each onset against the nearest expected time —
+// score-note starts in score mode, otherwise the beat grid. Latency-compensated.
+// Only meaningful when there's a timing reference (metronome on or a score).
+function computeRhythm(): { errorsMs: number[]; onTimeMs: number } | null {
+  const scoreMode = scoreModeActive();
+  if (!scoreMode && !state.metronomeOn) return null;
+  const spb = 60 / state.bpm;
+
+  const onsets: number[] = [];
+  let prevMidi: number | null = null;
+  let lastOnset = -1;
+  histForEach((ts, f, v) => {
+    if (f <= 0 || v < 0.012) { prevMidi = null; return; }
+    const m = Math.round(freqToMidi(f));
+    if (prevMidi === null || m !== prevMidi) {
+      if (ts - lastOnset > 0.09) { onsets.push(ts); lastOnset = ts; }
+      prevMidi = m;
+    }
+  });
+  if (onsets.length < 3) return null;
+
+  const expected: number[] = [];
+  if (scoreMode && state.track) {
+    for (const n of state.track.notes) expected.push((n.startBeat + SCORE_LEADIN_BEATS) * spb);
+  }
+
+  const errorsMs: number[] = [];
+  for (const ot of onsets) {
+    const t = (ot - state.startTime) - state.micLatency;  // play-time, from start
+    let expT: number;
+    if (scoreMode && expected.length) {
+      let best = expected[0], bestD = Infinity;
+      for (const e of expected) { const d = Math.abs(e - t); if (d < bestD) { bestD = d; best = e; } }
+      expT = best;
+    } else {
+      expT = Math.round(t / spb) * spb;  // nearest beat
+    }
+    const err = (t - expT) * 1000;
+    if (Math.abs(err) <= 300) errorsMs.push(err);
+  }
+  if (errorsMs.length < 3) return null;
+  return { errorsMs, onTimeMs: 60 };
+}
+
 function hideReport(): void {
   state.els?.reportEl.classList.add('hidden');
 }
@@ -1136,12 +1188,23 @@ function showReport(): void {
     }).join('') + '</ul>';
   }
 
+  const rh = computeRhythm();
+  let rhythmHtml = '';
+  if (rh) {
+    const r2 = analyzeRhythm(rh.errorsMs, rh.onTimeMs);
+    const tend = r2.tendencyMs > 20 ? `偏晚 ${Math.round(r2.tendencyMs)}ms`
+      : r2.tendencyMs < -20 ? `偏早 ${Math.round(-r2.tendencyMs)}ms` : '基本准时';
+    const cal = state.micLatency > 0 ? '' : ' <span class="report-hint">(未校准延迟,偏早/晚仅供参考)</span>';
+    rhythmHtml = `<div class="report-rhythm">节奏(近似):准时 ${Math.round(r2.onTimePct)}% · 平均偏差 ${Math.round(r2.meanAbsMs)}ms · ${tend}${cal}</div>`;
+  }
+
   el.innerHTML = `
     <div class="report-head">
       <span class="report-score">评分 <b>${r.score}</b></span>
       <span class="report-bars">在调 ${Math.round(r.inTunePct)}% · 接近 ${Math.round(r.closePct)}% · 跑调 ${Math.round(r.offPct)}%</span>
       ${tendency}
     </div>
+    ${rhythmHtml}
     ${worst}`;
   el.classList.remove('hidden');
 }
@@ -1257,6 +1320,7 @@ export function initRealtime(): void {
     clearBtn: document.getElementById('rt-clear') as HTMLButtonElement,
     exportBtn: document.getElementById('rt-export') as HTMLButtonElement,
     recordBtn: document.getElementById('rt-record') as HTMLButtonElement,
+    calibrateBtn: document.getElementById('rt-calibrate') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
@@ -1470,6 +1534,7 @@ export function initRealtime(): void {
   state.els.clearBtn.addEventListener('click', clearData);
   state.els.exportBtn.addEventListener('click', exportPng);
   state.els.recordBtn.addEventListener('click', () => { void toggleRecord(); });
+  state.els.calibrateBtn.addEventListener('click', () => { void calibrateLatency(); });
   state.els.tunerStartBtn.addEventListener('click', togglePlayPause);
 
   state.els.modeTabs.forEach(tab => {
@@ -1619,6 +1684,51 @@ async function toggleRecord(): Promise<void> {
   state.recording = true;
   updateRecordBtn();
   setStatus('录音中…');
+}
+
+// Measure mic latency by clicking through the speakers and finding when each
+// click arrives back in the mic. Best-effort: needs the click audible to the
+// mic. Fails gracefully with guidance if nothing is heard (e.g. headphones).
+async function calibrateLatency(): Promise<void> {
+  if (state.calibrating) return;
+  await ensureCtx();
+  if (!state.running) await start();
+  const ctx = state.ctx, analyser = state.analyser, buffer = state.buffer;
+  if (!ctx || !analyser || !buffer) { setStatus('校准失败:麦克风未就绪'); return; }
+
+  state.calibrating = true;
+  setStatus('校准中…请保持安静,让节拍声能被麦克风听到');
+
+  const clicks = 8, gap = 0.7;
+  const t0 = ctx.currentTime + 0.5;
+  const clickTimes: number[] = [];
+  for (let i = 0; i < clicks; i++) { const t = t0 + i * gap; playClick(ctx, t); clickTimes.push(t); }
+
+  const samples: { t: number; rms: number }[] = [];
+  const iv = setInterval(() => {
+    analyser.getFloatTimeDomainData(buffer);
+    let s = 0; for (let i = 0; i < buffer.length; i++) s += buffer[i] * buffer[i];
+    samples.push({ t: ctx.currentTime, rms: Math.sqrt(s / buffer.length) });
+  }, 6);
+
+  await new Promise(r => setTimeout(r, (clicks * gap + 0.6) * 1000));
+  clearInterval(iv);
+  state.calibrating = false;
+
+  const delays: number[] = [];
+  for (const ct of clickTimes.slice(1)) {   // skip first (warm-up)
+    let best = -1, bestT = 0;
+    for (const s of samples) if (s.t >= ct && s.t <= ct + 0.4 && s.rms > best) { best = s.rms; bestT = s.t; }
+    if (best > 0.02) delays.push(bestT - ct);
+  }
+  if (delays.length < 3) {
+    setStatus('没听到节拍声:请调大音量、或让麦克风离音箱近一点再试');
+    return;
+  }
+  delays.sort((a, b) => a - b);
+  state.micLatency = Math.max(0, Math.min(0.4, delays[Math.floor(delays.length / 2)]));
+  saveSettings();
+  setStatus(`已校准:麦克风延迟约 ${Math.round(state.micLatency * 1000)}ms`);
 }
 
 function toggleFullscreen(): void {

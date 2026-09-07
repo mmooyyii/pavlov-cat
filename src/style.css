@@ -379,6 +379,21 @@ header h1 {
 
 .report-worst b { color: var(--accent); }
 .report-good { font-size: 0.95rem; color: var(--success); font-weight: 600; }
+.report-rhythm { font-size: 0.9rem; color: var(--text); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.report-hint { font-size: 0.8rem; color: var(--muted); }
+
+.rt-mini-btn {
+  padding: 4px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rt-mini-btn:hover { border-color: var(--accent); }
 
 .rt-canvas-wrap {
   position: relative;

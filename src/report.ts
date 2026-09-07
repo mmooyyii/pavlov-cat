@@ -29,6 +29,30 @@ export interface Report {
 // commenting on — avoids flagging a note that was only brushed in passing.
 const MIN_NOTE_FRAMES = 15;
 
+export interface RhythmReport {
+  onsets: number;
+  onTimePct: number;   // within the on-time window
+  meanAbsMs: number;   // average absolute timing error
+  tendencyMs: number;  // + late, − early
+}
+
+// Timing errors are already latency-compensated, in milliseconds (+ = late).
+export function analyzeRhythm(errorsMs: number[], onTimeMs: number): RhythmReport {
+  const n = errorsMs.length;
+  let sumAbs = 0, sum = 0, on = 0;
+  for (const e of errorsMs) {
+    sumAbs += Math.abs(e);
+    sum += e;
+    if (Math.abs(e) <= onTimeMs) on++;
+  }
+  return {
+    onsets: n,
+    onTimePct: n ? (on / n) * 100 : 0,
+    meanAbsMs: n ? sumAbs / n : 0,
+    tendencyMs: n ? sum / n : 0,
+  };
+}
+
 export function analyze(entries: CentsEntry[], good: number, med: number): Report {
   const voiced = entries.length;
   let green = 0, close = 0, off = 0, sumSigned = 0, sumAbs = 0;
