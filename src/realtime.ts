@@ -4,6 +4,7 @@ import {
   COMMON_KEYS, isInScale, targetFreq, type Key, type Temperament,
 } from './music';
 import { Drone, type DroneMode } from './drone';
+import { analyze, type CentsEntry, type Report } from './report';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -191,6 +192,7 @@ const state = {
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
     pitchEl: HTMLElement;
+    reportEl: HTMLElement;
     modeTabs: NodeListOf<HTMLButtonElement>;
     practiceView: HTMLElement;
     tunerView: HTMLElement;
@@ -507,6 +509,7 @@ async function start(): Promise<void> {
   state.detectId = setInterval(detectStep, DETECT_INTERVAL_MS);
   // Device labels are only exposed after permission is granted — refresh now.
   void populateMicList();
+  hideReport();
   updateStartBtn();
   drawLoop();
 }
@@ -589,6 +592,7 @@ async function pause(): Promise<void> {
   updatePitchReadout(-1);
   updateStartBtn();
   drawOnce();
+  if (state.viewMode === 'practice') showReport();
 }
 
 async function resume(): Promise<void> {
@@ -610,6 +614,7 @@ async function resume(): Promise<void> {
 
   state.detectId = setInterval(detectStep, DETECT_INTERVAL_MS);
   setStatus('');
+  hideReport();
   updateStartBtn();
   drawLoop();
 }
@@ -627,6 +632,7 @@ function clearData(): void {
     state.nextTickTime = state.startTime + spb;
   }
   updatePitchReadout(-1);
+  hideReport();
   drawOnce();
 }
 
@@ -931,6 +937,65 @@ function updateStartBtn(): void {
   state.refreshPanCursor?.();
 }
 
+// ── Practice report ──────────────────────────────────────────────────────────
+// Walk the recorded history, snap each voiced frame to its nearest target note,
+// and hand the (name, cents) list to the analyzer. Frames more than ~150¢ from
+// any target are dropped as transitions/noise rather than counted as a note.
+function computeReport(): Report | null {
+  const targets = state.rangeNotes.filter(n => n.target);
+  if (!targets.length) return null;
+  const entries: CentsEntry[] = [];
+  histForEach((_ts, f) => {
+    if (f <= 0) return;
+    let bestAbs = Infinity, bestSigned = 0, bestName = '';
+    for (const t of targets) {
+      const c = 1200 * Math.log2(f / t.frequency);
+      const a = Math.abs(c);
+      if (a < bestAbs) { bestAbs = a; bestSigned = c; bestName = t.name; }
+    }
+    if (bestAbs > 150) return;
+    entries.push({ name: bestName, cents: Math.round(bestSigned) });
+  });
+  if (entries.length < 20) return null; // not enough to say anything useful
+  return analyze(entries, state.centsToleranceGood, state.centsToleranceMed);
+}
+
+function hideReport(): void {
+  state.els?.reportEl.classList.add('hidden');
+}
+
+function showReport(): void {
+  const el = state.els?.reportEl;
+  if (!el) return;
+  const r = computeReport();
+  if (!r) { hideReport(); return; }
+
+  const round = (n: number): string => `${n < 0 ? '−' : ''}${Math.abs(Math.round(n))}`;
+  let tendency = '';
+  if (r.tendency > state.centsToleranceGood) tendency = `<span class="report-note">整体偏高 ${round(r.tendency)}¢,容易拉高</span>`;
+  else if (r.tendency < -state.centsToleranceGood) tendency = `<span class="report-note">整体偏低 ${round(r.tendency)}¢,容易拉低</span>`;
+
+  let worst: string;
+  if (r.worst.length === 0) {
+    worst = '<div class="report-good">音准很稳,继续保持!</div>';
+  } else {
+    worst = '<div class="report-worst-title">最需要注意</div><ul class="report-worst">' + r.worst.map(w => {
+      const dir = w.meanCents > 0 ? '偏高' : '偏低';
+      const tip = w.meanCents > 0 ? '手指往下挪一点点' : '手指往上挪一点点';
+      return `<li><b>${w.name}</b> 平均${dir} ${round(w.meanCents)}¢ · ${tip}</li>`;
+    }).join('') + '</ul>';
+  }
+
+  el.innerHTML = `
+    <div class="report-head">
+      <span class="report-score">评分 <b>${r.score}</b></span>
+      <span class="report-bars">在调 ${Math.round(r.inTunePct)}% · 接近 ${Math.round(r.closePct)}% · 跑调 ${Math.round(r.offPct)}%</span>
+      ${tendency}
+    </div>
+    ${worst}`;
+  el.classList.remove('hidden');
+}
+
 // ── Tuner view ───────────────────────────────────────────────────────────────
 // Big single-note tuner for tuning the open strings. Shows the nearest note,
 // how many cents off, a needle, and which of G/D/A/E you're closest to.
@@ -1040,6 +1105,7 @@ export function initRealtime(): void {
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
+    reportEl: document.getElementById('rt-report') as HTMLElement,
     modeTabs: document.querySelectorAll<HTMLButtonElement>('#mode-tabs .mode-tab'),
     practiceView: document.getElementById('practice-view') as HTMLElement,
     tunerView: document.getElementById('tuner-view') as HTMLElement,
