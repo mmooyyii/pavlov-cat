@@ -135,13 +135,13 @@
           <div class="rt-control">
             <span class="config-label">麦克风</span>
             <select id="rt-mic" class="rt-select" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
+            <button id="rt-mic-help-btn" class="rt-help-btn" type="button" title="没有麦克风 / 换设备收音?" aria-label="收音帮助">?</button>
           </div>
           <div class="rt-control">
             <span class="config-label">节奏</span>
             <button id="rt-calibrate" class="rt-mini-btn" title="播放节拍声测量麦克风延迟,让节奏评分更准(需让麦克风能听到音箱声)">校准延迟</button>
           </div>
-          <details class="rt-help">
-            <summary>没有麦克风 / 换设备收音?</summary>
+          <div class="rt-help hidden" id="rt-mic-help">
             <p class="rt-help-sub">Mac(无内置麦)用 iPhone 收音:</p>
             <ol>
               <li>Mac 与 iPhone 登录同一 Apple ID,都打开 Wi-Fi 和蓝牙并靠近(macOS Ventura+、iOS 16+)。</li>
@@ -155,7 +155,7 @@
               <li>外接 USB / 蓝牙麦克风后,可在上方「麦克风」下拉里切换;蓝牙麦克风延迟大,建议同样先「校准延迟」。</li>
               <li>提示:浏览器只在 https(或 localhost)下允许用麦克风,局域网 IP 直接访问会拿不到权限。</li>
             </ol>
-          </details>
+          </div>
         </div>
         </details>
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">

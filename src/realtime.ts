@@ -1530,6 +1530,10 @@ export function initRealtime(): void {
   state.els.micSelect.addEventListener('change', () => {
     void switchMic(state.els!.micSelect.value);
   });
+  // Tiny "?" beside the picker toggles the mic-setup help panel.
+  document.getElementById('rt-mic-help-btn')?.addEventListener('click', () => {
+    document.getElementById('rt-mic-help')?.classList.toggle('hidden');
+  });
   if (navigator.mediaDevices) {
     navigator.mediaDevices.addEventListener?.('devicechange', () => { void populateMicList(); });
   }

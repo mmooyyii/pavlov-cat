@@ -395,24 +395,27 @@ header h1 {
 }
 .rt-mini-btn:hover { border-color: var(--accent); }
 
-/* Unobtrusive inline help (mic setup for iPhone continuity / Android tablets) */
+/* Mic-setup help: tiny "?" beside the mic picker toggles a full-width panel. */
+.rt-help-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.rt-help-btn:hover { border-color: var(--accent); color: var(--accent); }
+
 .rt-help {
   flex: 1 1 100%;
   font-size: 0.78rem;
   color: var(--muted);
-}
-
-.rt-help > summary {
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  opacity: 0.75;
-}
-.rt-help > summary::-webkit-details-marker { display: none; }
-.rt-help > summary::before { content: 'ⓘ '; }
-.rt-help > summary:hover { opacity: 1; color: var(--accent); }
-
-.rt-help[open] {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
