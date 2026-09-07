@@ -44,7 +44,15 @@
             <div class="toggle-group" id="rt-refmode-toggles">
               <button class="toggle active" data-value="chromatic">半音阶</button>
               <button class="toggle" data-value="scale">跟音阶</button>
+              <button class="toggle" data-value="score">跟乐谱</button>
             </div>
+          </div>
+          <div class="rt-control hidden" id="rt-score-controls">
+            <span class="config-label">乐谱</span>
+            <label class="rt-file-btn">导入 MusicXML
+              <input type="file" id="rt-file" accept=".musicxml,.xml,.mxl" hidden />
+            </label>
+            <span id="rt-score-title" class="rt-score-title">未导入</span>
           </div>
           <div class="rt-control" id="rt-scale-controls">
             <span class="config-label">调</span>

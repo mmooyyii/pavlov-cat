@@ -2,9 +2,11 @@ import { detectPitch } from './pitch';
 import {
   A4_HZ, freqToMidi, midiToFreq, midiToNoteName,
   COMMON_KEYS, isInScale, targetFreq, type Key, type Temperament,
+  type TargetNote, type TargetTrack,
 } from './music';
 import { Drone, type DroneMode } from './drone';
 import { analyze, type CentsEntry, type Report } from './report';
+import { parseMusicXml } from './musicxml';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -35,7 +37,10 @@ interface RefNote {
   target: boolean;     // true = a note the player should aim for / be judged against
 }
 
-type RefMode = 'chromatic' | 'scale';
+type RefMode = 'chromatic' | 'scale' | 'score';
+
+// One bar of metronome runway before the first score note reaches the playhead.
+const SCORE_LEADIN_BEATS = 4;
 
 function currentKey(): Key {
   const k = COMMON_KEYS[state.keyIndex] ?? COMMON_KEYS[0];
@@ -74,6 +79,21 @@ function tonicDroneMidi(): number {
   return k.tonicPc + 48; // C3..B3
 }
 
+// Which score note (if any) the playhead beat falls inside. Beats include the
+// lead-in offset, so score beat = elapsed beat − lead-in.
+function targetNoteAtBeat(beat: number): TargetNote | null {
+  const track = state.track;
+  if (!track) return null;
+  const b = beat - SCORE_LEADIN_BEATS;
+  if (b < 0) return null;
+  for (const n of track.notes) {
+    if (b >= n.startBeat && b < n.startBeat + n.durBeat) return n;
+  }
+  return null;
+}
+
+const scoreModeActive = (): boolean => state.refMode === 'score' && state.track != null;
+
 // ── Palette ─────────────────────────────────────────────────────────────────
 const PALETTE = {
   bgTop:        '#1d2128',
@@ -91,6 +111,10 @@ const PALETTE = {
   traceBad:     '#ff7a5c',  // >20 cents
   traceNoRef:   '#ff9a3c',  // when no reference notes are selected
   playhead:     '#5dd4d4',  // cyan-teal
+  scoreBlock:   'rgba(126, 180, 207, 0.22)',  // upcoming score note
+  scoreBlockNow:'rgba(93, 212, 212, 0.34)',   // note currently under the playhead
+  scoreBlockEdge: 'rgba(126, 180, 207, 0.7)',
+  scoreLabel:   '#cfe4ef',
 } as const;
 const DEFAULT_CENTS_TOLERANCE_GOOD = 6;   // ≤6¢ → green (trained musician threshold)
 const DEFAULT_CENTS_TOLERANCE_MED  = 15;  // ≤15¢ → yellow (perceptible to average listener)
@@ -128,10 +152,11 @@ const state = {
   soundKind: 'tom' as SoundKind,
   noiseBuffer: null as AudioBuffer | null,    // shared white-noise source for hihat
 
-  // Reference mode: chromatic lanes vs a chosen scale/key
+  // Reference mode: chromatic lanes vs a chosen scale/key vs an imported score
   refMode: 'chromatic' as RefMode,
   keyIndex: 0,                          // index into COMMON_KEYS
   temperament: 'equal' as Temperament,
+  track: null as TargetTrack | null,    // loaded MusicXML score
 
   // Reference drone (sustained tone to tune against)
   drone: null as Drone | null,
@@ -181,6 +206,9 @@ const state = {
     scaleControls: HTMLElement;
     keySelect: HTMLSelectElement;
     temperamentToggles: NodeListOf<HTMLButtonElement>;
+    scoreControls: HTMLElement;
+    fileInput: HTMLInputElement;
+    scoreTitle: HTMLElement;
     metronomeToggles: NodeListOf<HTMLButtonElement>;
     judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
@@ -521,6 +549,52 @@ async function applyDrone(): Promise<void> {
   state.drone?.set(state.droneMode, state.droneRootMidi, state.droneVol);
 }
 
+// ── Score import (MusicXML) ──────────────────────────────────────────────────
+const SCORE_KEY = 'pavlov-cat:score:v1';
+
+function setScoreTitle(): void {
+  if (!state.els) return;
+  state.els.scoreTitle.textContent = state.track
+    ? `${state.track.title} · ${state.track.notes.length} 音`
+    : '未导入';
+}
+
+async function loadScoreFile(file: File): Promise<void> {
+  if (/\.mxl$/i.test(file.name)) {
+    setStatus('暂不支持 .mxl 压缩谱,请在打谱软件里导出「未压缩的 MusicXML(.musicxml)」');
+    return;
+  }
+  let track;
+  try {
+    const text = await file.text();
+    track = parseMusicXml(text, file.name.replace(/\.[^.]+$/, ''));
+  } catch (e) {
+    setStatus(e instanceof Error ? e.message : '乐谱导入失败');
+    return;
+  }
+  state.track = track;
+  setScoreTitle();
+  if (track.bpm) {
+    state.bpm = Math.max(40, Math.min(220, Math.round(track.bpm)));
+    state.els!.bpmInput.value = String(state.bpm);
+  }
+  try { localStorage.setItem(SCORE_KEY, JSON.stringify(track)); } catch { /* */ }
+  saveSettings();
+  clearData();               // play from the top
+  setStatus(`已导入:${track.title}`);
+  drawOnce();
+}
+
+function loadSavedScore(): void {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(SCORE_KEY); } catch { return; }
+  if (!raw) return;
+  try {
+    const t = JSON.parse(raw) as TargetTrack;
+    if (t && Array.isArray(t.notes) && t.notes.length) state.track = t;
+  } catch { /* */ }
+}
+
 // ── Microphone device picker ────────────────────────────────────────────────
 // Fill the input-device dropdown. Device *labels* are only revealed after mic
 // permission is granted, so this is called both at init (generic names) and
@@ -709,8 +783,19 @@ function drawOnce(): void {
     ? (state.ctx.currentTime - state.startTime) / secsPerBeat
     : state.frozenElapsedBeats + state.viewOffsetBeats;
 
-  // Pitch range from the selected preset (reference lanes), with padding.
-  const refNotes = state.rangeNotes;
+  // Pitch range + reference lanes. Score mode derives a chromatic lane set from
+  // the loaded score's note range; otherwise use the chromatic/scale preset.
+  const scoreMode = scoreModeActive();
+  let refNotes = state.rangeNotes;
+  if (scoreMode) {
+    let lo = Infinity, hi = -Infinity;
+    for (const n of state.track!.notes) { if (n.midi < lo) lo = n.midi; if (n.midi > hi) hi = n.midi; }
+    lo = Math.floor(lo) - 1;
+    hi = Math.ceil(hi) + 1;
+    const lanes: RefNote[] = [];
+    for (let m = lo; m <= hi; m++) lanes.push({ midi: m, name: midiToNoteName(m), frequency: midiToFreq(m), target: true });
+    refNotes = lanes;
+  }
   let mMin = Infinity, mMax = -Infinity;
   for (const n of refNotes) {
     const m = freqToMidi(n.frequency);
@@ -829,6 +914,39 @@ function drawOnce(): void {
     }
   }
 
+  // Score note blocks (follow-along). Each note is a rounded bar at its pitch
+  // spanning its time; the bar under the playhead is highlighted "now".
+  if (scoreMode) {
+    const semiPx = Math.abs(midiToY(60) - midiToY(61));
+    const blockH = Math.max(6, semiPx * 0.82);
+    ctx2d.textAlign = 'left';
+    ctx2d.textBaseline = 'middle';
+    ctx2d.font = `${fontSm}px system-ui, sans-serif`;
+    const scoreBeat = elapsedBeats - SCORE_LEADIN_BEATS;
+    for (const n of state.track!.notes) {
+      const x0 = beatToX(n.startBeat + SCORE_LEADIN_BEATS);
+      const x1 = beatToX(n.startBeat + n.durBeat + SCORE_LEADIN_BEATS);
+      if (x1 < leftMargin || x0 > W) continue;
+      const y = midiToY(n.midi);
+      const now = scoreBeat >= n.startBeat && scoreBeat < n.startBeat + n.durBeat;
+      const left = Math.max(leftMargin, x0);
+      const w = Math.max(2, Math.min(W, x1) - left - 1);
+      ctx2d.fillStyle = now ? PALETTE.scoreBlockNow : PALETTE.scoreBlock;
+      ctx2d.strokeStyle = PALETTE.scoreBlockEdge;
+      ctx2d.lineWidth = 1;
+      const yy = y - blockH / 2;
+      ctx2d.beginPath();
+      const r = Math.min(4, blockH / 2, w / 2);
+      ctx2d.roundRect(left, yy, w, blockH, r);
+      ctx2d.fill();
+      ctx2d.stroke();
+      if (w > 22 * scale) {
+        ctx2d.fillStyle = PALETTE.scoreLabel;
+        ctx2d.fillText(n.name, left + 4, y);
+      }
+    }
+  }
+
   // Pitch trace + volume waveform. We keep this hot loop cheap by rejecting on
   // the visible-time window before any log/midi math, batching pitch segments
   // into per-color Path2D buckets (one stroke per color), and accumulating
@@ -850,16 +968,26 @@ function drawOnce(): void {
   for (const n of refNotes) if (n.target) refFreqs.push(n.frequency);
   const hasRef = refFreqs.length > 0;
 
-  const pickBucket = (f: number): number => {
-    if (!hasRef || !state.pitchJudge) return 3;
+  const bucketForCents = (absCents: number): number =>
+    absCents <= state.centsToleranceGood ? 0 : absCents <= state.centsToleranceMed ? 1 : 2;
+
+  // Colour a sample. Score mode judges against the note under that sample's
+  // beat (neutral during rests / lead-in); otherwise against the nearest of the
+  // static reference frequencies.
+  const pickBucket = (f: number, beat: number): number => {
+    if (!state.pitchJudge) return 3;
+    if (scoreMode) {
+      const tn = targetNoteAtBeat(beat);
+      if (!tn) return 3;
+      return bucketForCents(Math.abs(1200 * Math.log2(f / midiToFreq(tn.midi))));
+    }
+    if (!hasRef) return 3;
     let bestCents = Infinity;
     for (let i = 0; i < refFreqs.length; i++) {
       const c = Math.abs(1200 * Math.log2(f / refFreqs[i]));
       if (c < bestCents) bestCents = c;
     }
-    if (bestCents <= state.centsToleranceGood) return 0;
-    if (bestCents <= state.centsToleranceMed)  return 1;
-    return 2;
+    return bucketForCents(bestCents);
   };
 
   // Volume waveform: each visible sample contributes (x, top-y); we mirror
@@ -885,7 +1013,7 @@ function drawOnce(): void {
     const m = freqToMidi(f);
     if (m < mMin || m > mMax) return;
     const y = midiToY(m);
-    const p = buckets[pickBucket(f)].path;
+    const p = buckets[pickBucket(f, beat)].path;
     p.moveTo(x + dotR, y);
     p.arc(x, y, dotR, 0, Math.PI * 2);
   });
@@ -942,20 +1070,34 @@ function updateStartBtn(): void {
 // and hand the (name, cents) list to the analyzer. Frames more than ~150¢ from
 // any target are dropped as transitions/noise rather than counted as a note.
 function computeReport(): Report | null {
-  const targets = state.rangeNotes.filter(n => n.target);
-  if (!targets.length) return null;
   const entries: CentsEntry[] = [];
-  histForEach((_ts, f) => {
-    if (f <= 0) return;
-    let bestAbs = Infinity, bestSigned = 0, bestName = '';
-    for (const t of targets) {
-      const c = 1200 * Math.log2(f / t.frequency);
-      const a = Math.abs(c);
-      if (a < bestAbs) { bestAbs = a; bestSigned = c; bestName = t.name; }
-    }
-    if (bestAbs > 150) return;
-    entries.push({ name: bestName, cents: Math.round(bestSigned) });
-  });
+  if (scoreModeActive()) {
+    // Judge each frame against the score note under its beat.
+    const spb = 60 / state.bpm;
+    histForEach((ts, f) => {
+      if (f <= 0) return;
+      const beat = (ts - state.startTime) / spb;
+      const tn = targetNoteAtBeat(beat);
+      if (!tn) return;
+      const c = 1200 * Math.log2(f / midiToFreq(tn.midi));
+      if (Math.abs(c) > 150) return;
+      entries.push({ name: tn.name, cents: Math.round(c) });
+    });
+  } else {
+    const targets = state.rangeNotes.filter(n => n.target);
+    if (!targets.length) return null;
+    histForEach((_ts, f) => {
+      if (f <= 0) return;
+      let bestAbs = Infinity, bestSigned = 0, bestName = '';
+      for (const t of targets) {
+        const c = 1200 * Math.log2(f / t.frequency);
+        const a = Math.abs(c);
+        if (a < bestAbs) { bestAbs = a; bestSigned = c; bestName = t.name; }
+      }
+      if (bestAbs > 150) return;
+      entries.push({ name: bestName, cents: Math.round(bestSigned) });
+    });
+  }
   if (entries.length < 20) return null; // not enough to say anything useful
   return analyze(entries, state.centsToleranceGood, state.centsToleranceMed);
 }
@@ -1094,6 +1236,9 @@ export function initRealtime(): void {
     scaleControls: document.getElementById('rt-scale-controls') as HTMLElement,
     keySelect: document.getElementById('rt-key') as HTMLSelectElement,
     temperamentToggles: document.querySelectorAll<HTMLButtonElement>('#rt-temperament-toggles .toggle'),
+    scoreControls: document.getElementById('rt-score-controls') as HTMLElement,
+    fileInput: document.getElementById('rt-file') as HTMLInputElement,
+    scoreTitle: document.getElementById('rt-score-title') as HTMLElement,
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
@@ -1146,21 +1291,31 @@ export function initRealtime(): void {
     .map((k, i) => `<option value="${i}">${k.label}</option>`).join('');
   state.els.keySelect.value = String(state.keyIndex);
 
-  const syncScaleUi = (): void => {
+  const syncModeUi = (): void => {
     state.els!.scaleControls.classList.toggle('hidden', state.refMode !== 'scale');
+    state.els!.scoreControls.classList.toggle('hidden', state.refMode !== 'score');
   };
-  syncScaleUi();
+  syncModeUi();
+  loadSavedScore();
+  setScoreTitle();
 
   state.els.refModeToggles.forEach(btn => {
     btn.classList.toggle('active', btn.dataset.value === state.refMode);
     btn.addEventListener('click', () => {
       state.refMode = btn.dataset.value as RefMode;
       state.els!.refModeToggles.forEach(b => b.classList.toggle('active', b === btn));
-      syncScaleUi();
+      syncModeUi();
       refreshRefNotes();
       saveSettings();
+      if (state.refMode === 'score') clearData();   // start the score from the top
       drawOnce();
     });
+  });
+
+  state.els.fileInput.addEventListener('change', () => {
+    const f = state.els!.fileInput.files?.[0];
+    if (f) void loadScoreFile(f);
+    state.els!.fileInput.value = '';   // allow re-importing the same file
   });
 
   state.els.keySelect.addEventListener('change', () => {
