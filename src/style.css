@@ -129,6 +129,26 @@ header h1 {
   font-weight: 600;
 }
 
+.rt-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 8px;
+  min-height: 22px;
+}
+
+.rt-pitch {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.rt-status {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .rt-canvas-wrap {
   position: relative;
   background: #1d2128;

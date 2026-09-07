@@ -1,4 +1,6 @@
-import { detectPitch, freqToMidi } from './pitch';
+import { detectPitch } from './pitch';
+import { freqToMidi, midiToFreq, midiToNoteName } from './music';
+import { Drone, type DroneMode } from './drone';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -17,8 +19,6 @@ const DEFAULT_MIDI_MAX = freqToMidi(988); // B5
 
 // Reference notes: chromatic MIDI between two user-picked endpoints.
 // Picker bounds: G3 (open G, MIDI 55) to E7 (top of violin range, MIDI 100).
-const NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
-const TUNING_A4_HZ = 442;          // matches notes.ts; orchestral pitch
 const PICKER_MIN_MIDI = 55;        // G3
 const PICKER_MAX_MIDI = 100;       // E7
 const DEFAULT_LO_MIDI = 55;        // G3 — covers full 1st position
@@ -27,16 +27,6 @@ const DEFAULT_HI_MIDI = 79;        // G5
 interface RefNote {
   name: string;
   frequency: number;
-}
-
-function midiToNoteName(midi: number): string {
-  const idx = ((midi % 12) + 12) % 12;
-  const octave = Math.floor(midi / 12) - 1;
-  return NOTE_NAMES_SHARP[idx] + octave;
-}
-
-function midiToFreq(midi: number): number {
-  return TUNING_A4_HZ * Math.pow(2, (midi - 69) / 12);
 }
 
 function refNotesForRange(loMidi: number, hiMidi: number): RefNote[] {
@@ -95,6 +85,15 @@ const state = {
   soundKind: 'tom' as SoundKind,
   noiseBuffer: null as AudioBuffer | null,    // shared white-noise source for hihat
 
+  // Reference drone (sustained tone to tune against)
+  drone: null as Drone | null,
+  droneMode: 'off' as DroneMode,
+  droneRootMidi: 57,                    // A3
+  droneVol: 0.18,
+
+  // Microphone input device (Mac mini has no built-in mic → pick iPhone etc.)
+  micDeviceId: null as string | null,
+
   // Pan when stopped: displayed elapsed = frozenElapsedBeats + viewOffsetBeats.
   // Clamped so the playhead stays inside [0, frozenElapsedBeats].
   viewOffsetBeats: 0,
@@ -133,6 +132,9 @@ const state = {
     metronomeToggles: NodeListOf<HTMLButtonElement>;
     judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
+    droneToggles: NodeListOf<HTMLButtonElement>;
+    droneRootSelect: HTMLSelectElement;
+    micSelect: HTMLSelectElement;
     startBtn: HTMLButtonElement;
     clearBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
@@ -148,6 +150,7 @@ const SETTINGS_KEY = 'pavlov-cat:realtime-settings:v1';
 
 const SOUND_KINDS: readonly SoundKind[] = ['wood', 'click', 'tom', 'hihat'];
 const TIME_UNITS: readonly TimeUnit[] = ['beat', 'second'];
+const DRONE_MODES: readonly DroneMode[] = ['off', 'root', 'fifth'];
 
 function clampInt(v: unknown, lo: number, hi: number, fallback: number): number {
   const n = Math.floor(Number(v));
@@ -176,6 +179,9 @@ function loadSettings(): void {
   if ('loMidi' in data) state.loMidi = clampInt(data.loMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.loMidi);
   if ('hiMidi' in data) state.hiMidi = clampInt(data.hiMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.hiMidi);
   if (state.loMidi > state.hiMidi) [state.loMidi, state.hiMidi] = [state.hiMidi, state.loMidi];
+  if (typeof data.droneMode === 'string' && DRONE_MODES.includes(data.droneMode as DroneMode)) state.droneMode = data.droneMode as DroneMode;
+  if ('droneRootMidi' in data) state.droneRootMidi = clampInt(data.droneRootMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.droneRootMidi);
+  if (typeof data.micDeviceId === 'string') state.micDeviceId = data.micDeviceId;
 }
 
 function saveSettings(): void {
@@ -192,6 +198,9 @@ function saveSettings(): void {
       pitchJudge: state.pitchJudge,
       loMidi: state.loMidi,
       hiMidi: state.hiMidi,
+      droneMode: state.droneMode,
+      droneRootMidi: state.droneRootMidi,
+      micDeviceId: state.micDeviceId,
     }));
   } catch { /* quota / private mode — ignore */ }
 }
@@ -376,23 +385,47 @@ function getNoiseBuffer(ctx: AudioContext): AudioBuffer {
 }
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────
+// Create the AudioContext + Drone on first need. Both the drone and the mic
+// require an AudioContext; the drone can run with no mic at all, so this is
+// separated from mic acquisition.
+async function ensureCtx(): Promise<AudioContext> {
+  if (!state.ctx) {
+    state.ctx = new AudioContext();
+    state.drone = new Drone(state.ctx);
+  }
+  if (state.ctx.state === 'suspended') await state.ctx.resume();
+  return state.ctx;
+}
+
+// Open a mic stream honouring the chosen input device. echo/noise/gain
+// processing is disabled so the raw pitch reaches the detector.
+function openMicStream(): Promise<MediaStream> {
+  const id = state.micDeviceId;
+  return navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: id ? { exact: id } : undefined,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  });
+}
+
 async function start(): Promise<void> {
   if (state.running) return;
 
+  await ensureCtx();
+
   try {
-    state.micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    state.micStream = await openMicStream();
   } catch {
-    setStatus('无法访问麦克风');
+    setStatus('无法访问麦克风,请检查权限或换一个输入设备');
     return;
   }
 
-  state.ctx = new AudioContext();
-  if (state.ctx.state === 'suspended') await state.ctx.resume();
-
-  state.micSource = state.ctx.createMediaStreamSource(state.micStream);
-  state.analyser = state.ctx.createAnalyser();
+  const ctx = state.ctx!;
+  state.micSource = ctx.createMediaStreamSource(state.micStream);
+  state.analyser = ctx.createAnalyser();
   state.analyser.fftSize = FFT_SIZE;
   state.buffer = new Float32Array(state.analyser.fftSize);
   state.micSource.connect(state.analyser);
@@ -400,15 +433,78 @@ async function start(): Promise<void> {
 
   histClear();
 
-  state.startTime = state.ctx.currentTime + 0.1;
+  state.startTime = ctx.currentTime + 0.1;
   state.nextTickBeat = 0;
   state.nextTickTime = state.startTime;
   state.viewOffsetBeats = 0;
   state.running = true;
 
   state.detectId = setInterval(detectStep, DETECT_INTERVAL_MS);
+  // Device labels are only exposed after permission is granted — refresh now.
+  void populateMicList();
   updateStartBtn();
   drawLoop();
+}
+
+// Apply the current drone settings (creating the ctx on demand so pressing a
+// drone button also works before the mic has ever been started).
+async function applyDrone(): Promise<void> {
+  await ensureCtx();
+  state.drone?.set(state.droneMode, state.droneRootMidi, state.droneVol);
+}
+
+// ── Microphone device picker ────────────────────────────────────────────────
+// Fill the input-device dropdown. Device *labels* are only revealed after mic
+// permission is granted, so this is called both at init (generic names) and
+// again after start()/devicechange (real names). When the user hasn't picked a
+// device and an iPhone (Continuity Microphone) is present, prefer it — that's
+// the common case on a Mac mini with no built-in mic.
+async function populateMicList(): Promise<void> {
+  const sel = state.els?.micSelect;
+  if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
+  let devices: MediaDeviceInfo[];
+  try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { return; }
+  const inputs = devices.filter(d => d.kind === 'audioinput');
+
+  if (!state.micDeviceId) {
+    const iphone = inputs.find(d => /iphone|连续互通|continuity/i.test(d.label));
+    if (iphone && iphone.deviceId) {
+      state.micDeviceId = iphone.deviceId;
+      saveSettings();
+      setStatus('已自动选择 iPhone 麦克风');
+    }
+  }
+
+  sel.innerHTML = '';
+  const def = document.createElement('option');
+  def.value = '';
+  def.textContent = '系统默认输入';
+  sel.appendChild(def);
+  for (const d of inputs) {
+    const o = document.createElement('option');
+    o.value = d.deviceId;
+    o.textContent = d.label || '麦克风';
+    sel.appendChild(o);
+  }
+  sel.value = state.micDeviceId ?? '';
+}
+
+// Switch the active input device. Rebuilds the mic source live when running.
+async function switchMic(deviceId: string): Promise<void> {
+  state.micDeviceId = deviceId || null;
+  saveSettings();
+  if (!state.running || !state.ctx || !state.analyser) return;
+  try { state.micSource?.disconnect(); } catch { /* */ }
+  state.micStream?.getTracks().forEach(t => t.stop());
+  try {
+    state.micStream = await openMicStream();
+  } catch {
+    setStatus('无法切换到该输入设备');
+    return;
+  }
+  state.micSource = state.ctx.createMediaStreamSource(state.micStream);
+  state.micSource.connect(state.analyser);
+  setStatus('');
 }
 
 // Pause: keep mic + ctx + pitch history so resume() can continue from here.
@@ -483,12 +579,14 @@ async function teardown(): Promise<void> {
   try { state.micSource?.disconnect(); } catch { /* */ }
   try { state.analyser?.disconnect(); } catch { /* */ }
   state.micStream?.getTracks().forEach(t => t.stop());
+  state.drone?.dispose();
 
   state.micSource = null;
   state.analyser = null;
   state.micStream = null;
   state.buffer = null;
   state.noiseBuffer = null;
+  state.drone = null;
 
   if (state.ctx) { await state.ctx.close(); state.ctx = null; }
 
@@ -755,7 +853,7 @@ function togglePlayPause(): void {
 }
 
 // Map a frequency to the nearest note name + cents offset, for the readout.
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+// All math is A4=442 via music.ts, so the cents here agree with the trace color.
 function updatePitchReadout(freq: number): void {
   if (!state.els) return;
   if (freq <= 0) {
@@ -765,10 +863,8 @@ function updatePitchReadout(freq: number): void {
   const midi = freqToMidi(freq);
   const midiRound = Math.round(midi);
   const cents = Math.round((midi - midiRound) * 100);
-  const noteName = NOTE_NAMES[((midiRound % 12) + 12) % 12];
-  const octave = Math.floor(midiRound / 12) - 1;
   const sign = cents > 0 ? '+' : '';
-  state.els.pitchEl.textContent = `${freq.toFixed(1)} Hz · ${noteName}${octave} ${sign}${cents}¢`;
+  state.els.pitchEl.textContent = `${freq.toFixed(1)} Hz · ${midiToNoteName(midiRound)} ${sign}${cents}¢`;
 }
 
 // ── Public init ────────────────────────────────────────────────────────────
@@ -789,6 +885,9 @@ export function initRealtime(): void {
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
+    droneToggles: document.querySelectorAll<HTMLButtonElement>('#rt-drone-toggles .toggle'),
+    droneRootSelect: document.getElementById('rt-drone-root') as HTMLSelectElement,
+    micSelect: document.getElementById('rt-mic') as HTMLSelectElement,
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     clearBtn: document.getElementById('rt-clear') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
@@ -903,6 +1002,38 @@ export function initRealtime(): void {
       drawOnce();
     });
   });
+
+  // Drone (reference tone). Root note picker spans the violin range.
+  const droneOptsHtml: string[] = [];
+  for (let m = PICKER_MIN_MIDI; m <= PICKER_MAX_MIDI; m++) {
+    droneOptsHtml.push(`<option value="${m}">${midiToNoteName(m)}</option>`);
+  }
+  state.els.droneRootSelect.innerHTML = droneOptsHtml.join('');
+  state.els.droneRootSelect.value = String(state.droneRootMidi);
+  state.els.droneRootSelect.addEventListener('change', () => {
+    state.droneRootMidi = Number(state.els!.droneRootSelect.value) || state.droneRootMidi;
+    saveSettings();
+    if (state.droneMode !== 'off') void applyDrone();
+  });
+
+  state.els.droneToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === state.droneMode);
+    btn.addEventListener('click', () => {
+      state.droneMode = btn.dataset.value as DroneMode;
+      state.els!.droneToggles.forEach(b => b.classList.toggle('active', b === btn));
+      saveSettings();
+      void applyDrone();
+    });
+  });
+
+  // Microphone input device picker.
+  void populateMicList();
+  state.els.micSelect.addEventListener('change', () => {
+    void switchMic(state.els!.micSelect.value);
+  });
+  if (navigator.mediaDevices) {
+    navigator.mediaDevices.addEventListener?.('devicechange', () => { void populateMicList(); });
+  }
 
   state.els.startBtn.addEventListener('click', togglePlayPause);
   state.els.clearBtn.addEventListener('click', clearData);

@@ -88,6 +88,19 @@
               <button class="toggle" data-value="second">秒</button>
             </div>
           </div>
+          <div class="rt-control">
+            <span class="config-label">参考音</span>
+            <div class="toggle-group" id="rt-drone-toggles">
+              <button class="toggle active" data-value="off">关</button>
+              <button class="toggle" data-value="root">主音</button>
+              <button class="toggle" data-value="fifth">主音+五度</button>
+            </div>
+            <select id="rt-drone-root" class="rt-select" title="参考长音的音高(拉琴时用它对音准)"></select>
+          </div>
+          <div class="rt-control">
+            <span class="config-label">麦克风</span>
+            <select id="rt-mic" class="rt-select" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
+          </div>
         </div>
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">
           <canvas id="realtime-canvas"></canvas>
@@ -96,6 +109,10 @@
             <button id="rt-clear" class="rt-overlay-btn" title="清除当前会话的音高轨迹">🗑 清除</button>
           </div>
           <button id="rt-fullscreen" class="rt-fullscreen-btn" title="全屏 / 退出全屏" aria-label="全屏">⛶</button>
+        </div>
+        <div class="rt-readout">
+          <span id="rt-pitch" class="rt-pitch">— Hz</span>
+          <span id="rt-status" class="rt-status"></span>
         </div>
       </div>
     </main>
