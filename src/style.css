@@ -137,41 +137,103 @@ header h1 {
 
 .mode-tab:not(.active):active { opacity: 0.5; }
 
-/* ── Settings card ──────────────────────────────────────────────────────── */
-.rt-settings { margin-bottom: 14px; }
-
-.rt-settings > summary {
-  list-style: none;
-  cursor: pointer;
-  display: none;                 /* desktop: settings always visible */
-  padding: 9px 14px;
-  background: var(--surface);
-  border-radius: var(--radius-md);
-  box-shadow: var(--card-shadow);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--accent);
-  user-select: none;
-}
-.rt-settings > summary::-webkit-details-marker { display: none; }
-
-.rt-controls {
+/* ── Toolbar (frequent controls) + ⚙ settings popover ───────────────────── */
+.rt-toolbar {
+  position: relative;            /* anchors the settings popover */
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 20px;
+  gap: 12px 22px;
   background: var(--surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--card-shadow);
-  padding: 14px 18px;
+  padding: 12px 18px;
+  margin-bottom: 14px;
 }
-.rt-settings > summary + .rt-controls { margin-top: 8px; }
+
+.tb-spacer { flex: 1 1 auto; }
 
 .rt-control {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
+.rt-gear-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.rt-gear-btn:hover { background: var(--fill-strong); color: var(--label); }
+.rt-gear-btn:active { transform: scale(0.94); }
+
+.settings-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 30;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 0.5px var(--separator), 0 16px 48px rgba(0, 0, 0, 0.20);
+  padding: 4px 18px 12px;
+  animation: pop-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.97) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.sp-group {
+  padding: 10px 0 6px;
+  border-bottom: 0.5px solid var(--separator);
+}
+.sp-group:last-child { border-bottom: none; padding-bottom: 2px; }
+
+.sp-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--tertiary);
+  margin-bottom: 2px;
+}
+
+.sp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.sp-label {
+  font-size: 13px;
+  color: var(--label);
+  white-space: nowrap;
+}
+
+.sp-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Long device names must not push controls out of the panel. */
+.settings-panel .rt-select { max-width: 210px; text-overflow: ellipsis; }
 
 .config-label {
   font-size: 13px;
@@ -668,7 +730,7 @@ input[type='number']:focus {
 
 /* ── Gentle entrance ────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: no-preference) {
-  .rt-settings, .rt-canvas-wrap, .tuner-card, .rt-readout {
+  .rt-toolbar, .rt-canvas-wrap, .tuner-card, .rt-readout {
     animation: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) backwards;
   }
   .rt-canvas-wrap { animation-delay: 0.05s; }
@@ -687,15 +749,30 @@ input[type='number']:focus {
   header h1 { font-size: 16px; }
   .mode-tab { padding: 4px 20px; }
 
-  /* Collapse settings behind the ⚙ summary; tap to expand. */
-  .rt-settings > summary { display: block; }
-
-  .rt-controls { gap: 10px 14px; padding: 12px 14px; }
-  /* Each control on its own row for thumb-friendly tapping. */
+  /* Toolbar: rows stack; the gear pins to the card's top-right corner. */
+  .rt-toolbar { gap: 10px 14px; padding: 12px 14px; padding-right: 52px; }
   .rt-control {
     flex: 1 1 100%;
     justify-content: space-between;
   }
+  .tb-spacer { display: none; }
+  .rt-gear-btn { position: absolute; top: 10px; right: 12px; }
+
+  /* Settings popover becomes a bottom sheet. */
+  .settings-panel {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    top: auto;
+    bottom: 8px;
+    width: auto;
+    max-width: none;
+    max-height: 72vh;
+    overflow-y: auto;
+    border-radius: 18px;
+    box-shadow: 0 0 0 0.5px var(--separator), 0 -8px 40px rgba(0, 0, 0, 0.25);
+  }
+
   .rt-select, #rt-bpm, #rt-accent, #rt-visible-beats,
   #rt-cents-good, #rt-cents-med { min-height: 34px; }
 

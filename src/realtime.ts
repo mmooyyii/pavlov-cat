@@ -211,13 +211,16 @@ const state = {
     soundSelect: HTMLSelectElement;
     rangeLoSelect: HTMLSelectElement;
     rangeHiSelect: HTMLSelectElement;
-    refModeToggles: NodeListOf<HTMLButtonElement>;
     scaleControls: HTMLElement;
     keySelect: HTMLSelectElement;
     temperamentToggles: NodeListOf<HTMLButtonElement>;
+    temperamentRow: HTMLElement;
+    rangeRow: HTMLElement;
     scoreControls: HTMLElement;
     fileInput: HTMLInputElement;
     scoreTitle: HTMLElement;
+    settingsBtn: HTMLButtonElement;
+    settingsPanel: HTMLElement;
     metronomeToggles: NodeListOf<HTMLButtonElement>;
     judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
@@ -1261,32 +1264,64 @@ function updateTuner(freq: number): void {
   });
 }
 
-// Switch between the practice scope and the tuner. Entering the tuner starts
-// the mic automatically so a beginner just sees a working tuner. The practice
-// timeline is frozen while tuning (detectStep also skips histPush/metronome in
-// tuner mode) so tuning noise neither pollutes the trail nor advances the clock.
-function setViewMode(mode: ViewMode): void {
-  if (!state.els || mode === state.viewMode) return;
+// One top-level mode switcher: the three practice reference modes plus the
+// tuner all live in the header tabs.
+type TabMode = RefMode | 'tuner';
+
+// Sync every mode-dependent piece of UI: active tab, visible view, and the
+// contextual controls (调 in scale mode, 导入乐谱 in score mode, 音准标准 only
+// for scales, 音域 hidden for scores where the range comes from the music).
+function updateModeUi(): void {
+  if (!state.els) return;
+  const tab: TabMode = state.viewMode === 'tuner' ? 'tuner' : state.refMode;
+  state.els.modeTabs.forEach(t => t.classList.toggle('active', t.dataset.mode === tab));
+  state.els.practiceView.classList.toggle('hidden', state.viewMode !== 'practice');
+  state.els.tunerView.classList.toggle('hidden', state.viewMode !== 'tuner');
+  state.els.scaleControls.classList.toggle('hidden', state.refMode !== 'scale');
+  state.els.scoreControls.classList.toggle('hidden', state.refMode !== 'score');
+  state.els.temperamentRow.classList.toggle('hidden', state.refMode !== 'scale');
+  state.els.rangeRow.classList.toggle('hidden', state.refMode === 'score');
+}
+
+// Entering the tuner starts the mic automatically so a beginner just sees a
+// working tuner. The practice timeline is frozen while tuning (detectStep also
+// skips histPush/metronome in tuner mode) so tuning noise neither pollutes the
+// trail nor advances the clock.
+function selectMode(tab: TabMode): void {
+  if (!state.els) return;
   const spb = 60 / state.bpm;
-  if (mode === 'tuner' && state.running && state.ctx) {
-    state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / spb;
+
+  if (tab === 'tuner') {
+    if (state.viewMode !== 'tuner') {
+      if (state.running && state.ctx) {
+        state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / spb;
+      }
+      state.viewMode = 'tuner';
+      if (!state.running && !state.ctx) {
+        void start().then(() => { if (!state.running) state.els!.tunerCents.textContent = '无法访问麦克风,请检查权限或设备'; });
+      }
+    }
+  } else {
+    if (state.viewMode === 'tuner' && state.running && state.ctx) {
+      // Continue from where the practice clock was frozen (same math as
+      // resume()). A fresh session started in the tuner has frozen=0 → begin at
+      // beat 0 so the first metronome accent isn't skipped.
+      state.startTime = state.ctx.currentTime - state.frozenElapsedBeats * spb;
+      const nextBeat = state.frozenElapsedBeats <= 0 ? 0 : Math.floor(state.frozenElapsedBeats) + 1;
+      state.nextTickBeat = nextBeat;
+      state.nextTickTime = Math.max(state.startTime + nextBeat * spb, state.ctx.currentTime + 0.05);
+    }
+    state.viewMode = 'practice';
+    if (state.refMode !== tab) {
+      state.refMode = tab;
+      refreshRefNotes();
+      saveSettings();
+      if (tab === 'score') clearData();   // start the score from the top
+      drawOnce();
+    }
   }
-  state.viewMode = mode;
-  state.els.modeTabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
-  state.els.practiceView.classList.toggle('hidden', mode !== 'practice');
-  state.els.tunerView.classList.toggle('hidden', mode !== 'tuner');
-  if (mode === 'practice' && state.running && state.ctx) {
-    // Continue from where the practice clock was frozen (same math as resume()).
-    // A fresh session started in the tuner has frozen=0 → begin at beat 0 so the
-    // first metronome accent isn't skipped.
-    state.startTime = state.ctx.currentTime - state.frozenElapsedBeats * spb;
-    const nextBeat = state.frozenElapsedBeats <= 0 ? 0 : Math.floor(state.frozenElapsedBeats) + 1;
-    state.nextTickBeat = nextBeat;
-    state.nextTickTime = Math.max(state.startTime + nextBeat * spb, state.ctx.currentTime + 0.05);
-  }
-  if (mode === 'tuner' && !state.running && !state.ctx) {
-    void start().then(() => { if (!state.running) state.els!.tunerCents.textContent = '无法访问麦克风,请检查权限或设备'; });
-  }
+
+  updateModeUi();
   // Canvas sizes to whichever view is visible now; while practice was hidden
   // its wrap measured 0 and the canvas fell to the 320px floor.
   resizeCanvas();
@@ -1329,13 +1364,16 @@ export function initRealtime(): void {
     soundSelect: document.getElementById('rt-sound') as HTMLSelectElement,
     rangeLoSelect: document.getElementById('rt-range-lo') as HTMLSelectElement,
     rangeHiSelect: document.getElementById('rt-range-hi') as HTMLSelectElement,
-    refModeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-refmode-toggles .toggle'),
     scaleControls: document.getElementById('rt-scale-controls') as HTMLElement,
     keySelect: document.getElementById('rt-key') as HTMLSelectElement,
     temperamentToggles: document.querySelectorAll<HTMLButtonElement>('#rt-temperament-toggles .toggle'),
+    temperamentRow: document.getElementById('rt-temperament-row') as HTMLElement,
+    rangeRow: document.getElementById('rt-range-row') as HTMLElement,
     scoreControls: document.getElementById('rt-score-controls') as HTMLElement,
     fileInput: document.getElementById('rt-file') as HTMLInputElement,
     scoreTitle: document.getElementById('rt-score-title') as HTMLElement,
+    settingsBtn: document.getElementById('rt-settings-btn') as HTMLButtonElement,
+    settingsPanel: document.getElementById('rt-settings-panel') as HTMLElement,
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
@@ -1391,25 +1429,23 @@ export function initRealtime(): void {
     .map((k, i) => `<option value="${i}">${k.label}</option>`).join('');
   state.els.keySelect.value = String(state.keyIndex);
 
-  const syncModeUi = (): void => {
-    state.els!.scaleControls.classList.toggle('hidden', state.refMode !== 'scale');
-    state.els!.scoreControls.classList.toggle('hidden', state.refMode !== 'score');
-  };
-  syncModeUi();
   loadSavedScore();
   setScoreTitle();
+  updateModeUi();   // reflect the persisted refMode in tabs + contextual controls
 
-  state.els.refModeToggles.forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.value === state.refMode);
-    btn.addEventListener('click', () => {
-      state.refMode = btn.dataset.value as RefMode;
-      state.els!.refModeToggles.forEach(b => b.classList.toggle('active', b === btn));
-      syncModeUi();
-      refreshRefNotes();
-      saveSettings();
-      if (state.refMode === 'score') clearData();   // start the score from the top
-      drawOnce();
-    });
+  // ⚙ settings popover: toggle on the gear, dismiss on outside click / Esc.
+  state.els.settingsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.els!.settingsPanel.classList.toggle('hidden');
+  });
+  document.addEventListener('click', (e) => {
+    const panel = state.els!.settingsPanel;
+    if (panel.classList.contains('hidden')) return;
+    const t = e.target as Node;
+    if (!panel.contains(t) && t !== state.els!.settingsBtn) panel.classList.add('hidden');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') state.els!.settingsPanel.classList.add('hidden');
   });
 
   state.els.fileInput.addEventListener('change', () => {
@@ -1568,7 +1604,7 @@ export function initRealtime(): void {
   state.els.tunerStartBtn.addEventListener('click', togglePlayPause);
 
   state.els.modeTabs.forEach(tab => {
-    tab.addEventListener('click', () => setViewMode(tab.dataset.mode as ViewMode));
+    tab.addEventListener('click', () => selectMode(tab.dataset.mode as TabMode));
   });
 
   state.els.fullscreenBtn.addEventListener('click', toggleFullscreen);

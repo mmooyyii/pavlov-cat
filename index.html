@@ -35,7 +35,9 @@
         <h1>Pavlov Cat</h1>
       </div>
       <div class="mode-tabs" id="mode-tabs">
-        <button class="mode-tab active" data-mode="practice">练习</button>
+        <button class="mode-tab active" data-mode="chromatic">半音阶</button>
+        <button class="mode-tab" data-mode="scale">跟音阶</button>
+        <button class="mode-tab" data-mode="score">跟乐谱</button>
         <button class="mode-tab" data-mode="tuner">调弦</button>
       </div>
     </header>
@@ -43,59 +45,20 @@
     <main>
       <div id="practice-view">
       <div id="realtime-panel">
-        <details class="rt-settings" open>
-          <summary>⚙ 设置</summary>
-        <div class="rt-controls">
-          <div class="rt-control">
-            <span class="config-label">参考方式</span>
-            <div class="toggle-group" id="rt-refmode-toggles">
-              <button class="toggle active" data-value="chromatic">半音阶</button>
-              <button class="toggle" data-value="scale">跟音阶</button>
-              <button class="toggle" data-value="score">跟乐谱</button>
-            </div>
+        <div class="rt-toolbar">
+          <div class="rt-control hidden" id="rt-scale-controls">
+            <span class="config-label">调</span>
+            <select id="rt-key" class="rt-select"></select>
           </div>
           <div class="rt-control hidden" id="rt-score-controls">
-            <span class="config-label">乐谱</span>
             <label class="rt-file-btn">导入 MusicXML
               <input type="file" id="rt-file" accept=".musicxml,.xml,.mxl" hidden />
             </label>
             <span id="rt-score-title" class="rt-score-title">未导入</span>
           </div>
-          <div class="rt-control" id="rt-scale-controls">
-            <span class="config-label">调</span>
-            <select id="rt-key" class="rt-select"></select>
-            <span class="config-label">音准标准</span>
-            <div class="toggle-group" id="rt-temperament-toggles" title="标准=平均律,通用;更协和=纯律,某些音更贴合和声、更干净。不确定就用标准。">
-              <button class="toggle active" data-value="equal">标准</button>
-              <button class="toggle" data-value="just">更协和</button>
-            </div>
-          </div>
-          <div class="rt-control">
-            <span class="config-label">音域</span>
-            <select id="rt-range-lo" class="rt-select"></select>
-            <span class="rt-range-sep">–</span>
-            <select id="rt-range-hi" class="rt-select"></select>
-          </div>
           <div class="rt-control">
             <span class="config-label">BPM</span>
             <input id="rt-bpm" type="number" min="40" max="220" step="1" value="80" />
-          </div>
-          <div class="rt-control">
-            <span class="config-label">每 N 拍重音</span>
-            <input id="rt-accent" type="number" min="1" max="12" step="1" value="4" />
-          </div>
-          <div class="rt-control">
-            <span class="config-label">显示拍数</span>
-            <input id="rt-visible-beats" type="number" min="4" max="32" step="1" value="32" />
-          </div>
-          <div class="rt-control">
-            <span class="config-label">音色</span>
-            <select id="rt-sound" class="rt-select">
-              <option value="wood">木质打点</option>
-              <option value="click">电子 click</option>
-              <option value="tom" selected>低音鼓点</option>
-              <option value="hihat">Hi-hat</option>
-            </select>
           </div>
           <div class="rt-control">
             <span class="config-label">节拍器</span>
@@ -105,60 +68,118 @@
             </div>
           </div>
           <div class="rt-control">
-            <span class="config-label">音准判定</span>
-            <div class="toggle-group" id="rt-judge-toggles">
-              <button class="toggle active" data-value="on">开</button>
-              <button class="toggle" data-value="off">关</button>
-            </div>
-          </div>
-          <div class="rt-control">
-            <span class="config-label">音准容差 (¢)</span>
-            <input id="rt-cents-good" type="number" min="1" max="50" step="1" value="6" title="绿色阈值：误差 ≤ 此值（音分）" />
-            <span class="rt-range-sep">/</span>
-            <input id="rt-cents-med" type="number" min="2" max="100" step="1" value="15" title="黄色阈值：误差 ≤ 此值（音分），超出则红色" />
-          </div>
-          <div class="rt-control">
-            <span class="config-label">时间单位</span>
-            <div class="toggle-group" id="rt-unit-toggles">
-              <button class="toggle active" data-value="beat">拍</button>
-              <button class="toggle" data-value="second">秒</button>
-            </div>
-          </div>
-          <div class="rt-control">
             <span class="config-label">参考音</span>
             <div class="toggle-group" id="rt-drone-toggles">
               <button class="toggle active" data-value="off">关</button>
               <button class="toggle" data-value="root">主音</button>
               <button class="toggle" data-value="fifth">主音+五度</button>
             </div>
-            <select id="rt-drone-root" class="rt-select" title="参考长音的音高(拉琴时用它对音准)"></select>
           </div>
-          <div class="rt-control">
-            <span class="config-label">麦克风</span>
-            <select id="rt-mic" class="rt-select" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
-            <button id="rt-mic-help-btn" class="rt-help-btn" type="button" title="没有麦克风 / 换设备收音?" aria-label="收音帮助">?</button>
-          </div>
-          <div class="rt-control">
-            <span class="config-label">节奏</span>
-            <button id="rt-calibrate" class="rt-mini-btn" title="播放节拍声测量麦克风延迟,让节奏评分更准(需让麦克风能听到音箱声)">校准延迟</button>
-          </div>
-          <div class="rt-help hidden" id="rt-mic-help">
-            <p class="rt-help-sub">Mac(无内置麦)用 iPhone 收音:</p>
-            <ol>
-              <li>Mac 与 iPhone 登录同一 Apple ID,都打开 Wi-Fi 和蓝牙并靠近(macOS Ventura+、iOS 16+)。</li>
-              <li>iPhone:设置 → 通用 → 隔空播放与接力 → 打开「连续互通相机」(这一项同时管麦克风)。</li>
-              <li>回到本页点一次「▶ 开始」授权麦克风 —— 上方「麦克风」下拉会出现"xxx 的 iPhone 麦克风",检测到会自动选中,也可手动选。或在 系统设置 → 声音 → 输入 里固定选 iPhone。</li>
-              <li>iPhone 无线收音延迟较大:要看节奏评分,先点一次「校准延迟」(需让 iPhone 能听到电脑音箱的节拍声)。</li>
-            </ol>
-            <p class="rt-help-sub">安卓平板 / 手机:</p>
-            <ol>
-              <li>直接用平板浏览器(推荐 Chrome)打开本页,点「▶ 开始」后在弹窗里允许使用麦克风,自带麦克风即可收音。</li>
-              <li>外接 USB / 蓝牙麦克风后,可在上方「麦克风」下拉里切换;蓝牙麦克风延迟大,建议同样先「校准延迟」。</li>
-              <li>提示:浏览器只在 https(或 localhost)下允许用麦克风,局域网 IP 直接访问会拿不到权限。</li>
-            </ol>
+          <div class="tb-spacer"></div>
+          <button id="rt-settings-btn" class="rt-gear-btn" type="button" title="更多设置" aria-label="更多设置">⚙</button>
+
+          <div id="rt-settings-panel" class="settings-panel hidden">
+            <div class="sp-group">
+              <div class="sp-title">节拍器</div>
+              <div class="sp-row">
+                <span class="sp-label">每 N 拍重音</span>
+                <input id="rt-accent" type="number" min="1" max="12" step="1" value="4" />
+              </div>
+              <div class="sp-row">
+                <span class="sp-label">音色</span>
+                <select id="rt-sound" class="rt-select">
+                  <option value="wood">木质打点</option>
+                  <option value="click">电子 click</option>
+                  <option value="tom" selected>低音鼓点</option>
+                  <option value="hihat">Hi-hat</option>
+                </select>
+              </div>
+            </div>
+            <div class="sp-group">
+              <div class="sp-title">音准判定</div>
+              <div class="sp-row">
+                <span class="sp-label">判定着色</span>
+                <div class="toggle-group" id="rt-judge-toggles">
+                  <button class="toggle active" data-value="on">开</button>
+                  <button class="toggle" data-value="off">关</button>
+                </div>
+              </div>
+              <div class="sp-row">
+                <span class="sp-label">容差 (¢) 绿 / 黄</span>
+                <span class="sp-inline">
+                  <input id="rt-cents-good" type="number" min="1" max="50" step="1" value="6" title="绿色阈值：误差 ≤ 此值（音分）" />
+                  <span class="rt-range-sep">/</span>
+                  <input id="rt-cents-med" type="number" min="2" max="100" step="1" value="15" title="黄色阈值：误差 ≤ 此值（音分），超出则红色" />
+                </span>
+              </div>
+              <div class="sp-row" id="rt-temperament-row">
+                <span class="sp-label">音准标准</span>
+                <div class="toggle-group" id="rt-temperament-toggles" title="标准=平均律,通用;更协和=纯律,某些音更贴合和声、更干净。不确定就用标准。">
+                  <button class="toggle active" data-value="equal">标准</button>
+                  <button class="toggle" data-value="just">更协和</button>
+                </div>
+              </div>
+            </div>
+            <div class="sp-group">
+              <div class="sp-title">显示</div>
+              <div class="sp-row" id="rt-range-row">
+                <span class="sp-label">音域</span>
+                <span class="sp-inline">
+                  <select id="rt-range-lo" class="rt-select"></select>
+                  <span class="rt-range-sep">–</span>
+                  <select id="rt-range-hi" class="rt-select"></select>
+                </span>
+              </div>
+              <div class="sp-row">
+                <span class="sp-label">显示拍数</span>
+                <input id="rt-visible-beats" type="number" min="4" max="32" step="1" value="32" />
+              </div>
+              <div class="sp-row">
+                <span class="sp-label">时间单位</span>
+                <div class="toggle-group" id="rt-unit-toggles">
+                  <button class="toggle active" data-value="beat">拍</button>
+                  <button class="toggle" data-value="second">秒</button>
+                </div>
+              </div>
+            </div>
+            <div class="sp-group">
+              <div class="sp-title">参考音</div>
+              <div class="sp-row">
+                <span class="sp-label">根音</span>
+                <select id="rt-drone-root" class="rt-select" title="参考长音的音高(拉琴时用它对音准)。跟音阶模式下自动跟随该调主音。"></select>
+              </div>
+            </div>
+            <div class="sp-group">
+              <div class="sp-title">设备</div>
+              <div class="sp-row">
+                <span class="sp-label">麦克风</span>
+                <span class="sp-inline">
+                  <select id="rt-mic" class="rt-select" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
+                  <button id="rt-mic-help-btn" class="rt-help-btn" type="button" title="没有麦克风 / 换设备收音?" aria-label="收音帮助">?</button>
+                </span>
+              </div>
+              <div class="sp-row">
+                <span class="sp-label">节奏延迟</span>
+                <button id="rt-calibrate" class="rt-mini-btn" title="播放节拍声测量麦克风延迟,让节奏评分更准(需让麦克风能听到音箱声)">校准延迟</button>
+              </div>
+              <div class="rt-help hidden" id="rt-mic-help">
+                <p class="rt-help-sub">Mac(无内置麦)用 iPhone 收音:</p>
+                <ol>
+                  <li>Mac 与 iPhone 登录同一 Apple ID,都打开 Wi-Fi 和蓝牙并靠近(macOS Ventura+、iOS 16+)。</li>
+                  <li>iPhone:设置 → 通用 → 隔空播放与接力 → 打开「连续互通相机」(这一项同时管麦克风)。</li>
+                  <li>回到本页点一次「▶ 开始」授权麦克风 —— 「麦克风」下拉会出现"xxx 的 iPhone 麦克风",检测到会自动选中,也可手动选。或在 系统设置 → 声音 → 输入 里固定选 iPhone。</li>
+                  <li>iPhone 无线收音延迟较大:要看节奏评分,先点一次「校准延迟」(需让 iPhone 能听到电脑音箱的节拍声)。</li>
+                </ol>
+                <p class="rt-help-sub">安卓平板 / 手机:</p>
+                <ol>
+                  <li>直接用平板浏览器(推荐 Chrome)打开本页,点「▶ 开始」后在弹窗里允许使用麦克风,自带麦克风即可收音。</li>
+                  <li>外接 USB / 蓝牙麦克风后,可在「麦克风」下拉里切换;蓝牙麦克风延迟大,建议同样先「校准延迟」。</li>
+                  <li>提示:浏览器只在 https(或 localhost)下允许用麦克风,局域网 IP 直接访问会拿不到权限。</li>
+                </ol>
+              </div>
+            </div>
           </div>
         </div>
-        </details>
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">
           <canvas id="realtime-canvas"></canvas>
           <div class="rt-canvas-actions">
