@@ -94,27 +94,27 @@ function targetNoteAtBeat(beat: number): TargetNote | null {
 
 const scoreModeActive = (): boolean => state.refMode === 'score' && state.track != null;
 
-// ── Palette ─────────────────────────────────────────────────────────────────
+// ── Palette — Apple dark-appearance system colors ───────────────────────────
 const PALETTE = {
-  bgTop:        '#1d2128',
-  bgBottom:     '#14161b',
-  refLine:      '#2c333d',
-  refLineFaint: '#20262e',  // non-scale guide lines in scale mode
-  refLabel:     '#7eb4cf',  // soft cool blue
-  refLabelTgt:  '#8ad0a0',  // scale target labels — soft green
-  gridAccent:   '#3e2f1a',  // warm dark amber
-  gridRegular:  '#22272d',  // cool dark gray
-  labelAccent:  '#d4a96a',  // warm gold
-  labelRegular: '#7a8590',
-  traceGood:    '#5dc97a',  // ≤6 cents — trained-ear threshold
-  traceMed:     '#e6b450',  // ≤20 cents — average listener notices "a bit off"
-  traceBad:     '#ff7a5c',  // >20 cents
-  traceNoRef:   '#ff9a3c',  // when no reference notes are selected
-  playhead:     '#5dd4d4',  // cyan-teal
-  scoreBlock:   'rgba(126, 180, 207, 0.22)',  // upcoming score note
-  scoreBlockNow:'rgba(93, 212, 212, 0.34)',   // note currently under the playhead
-  scoreBlockEdge: 'rgba(126, 180, 207, 0.7)',
-  scoreLabel:   '#cfe4ef',
+  bgTop:        '#1c1c1e',  // systemGray6 dark — matches the stage chrome
+  bgBottom:     '#131315',
+  refLine:      '#2c2c30',
+  refLineFaint: '#232326',  // non-scale guide lines in scale mode
+  refLabel:     '#8eb8d4',  // soft cool blue
+  refLabelTgt:  '#30d158',  // scale target labels — systemGreen (dark)
+  gridAccent:   '#3d3324',  // warm dark amber
+  gridRegular:  '#242428',
+  labelAccent:  '#d4b06a',  // warm gold
+  labelRegular: '#8e8e93',  // systemGray
+  traceGood:    '#30d158',  // systemGreen — ≤ good tolerance
+  traceMed:     '#ffd60a',  // systemYellow — ≤ med tolerance
+  traceBad:     '#ff453a',  // systemRed — beyond
+  traceNoRef:   '#ff9f0a',  // systemOrange — no judging reference
+  playhead:     '#64d2ff',  // systemCyan
+  scoreBlock:   'rgba(10, 132, 255, 0.20)',   // upcoming score note — systemBlue tint
+  scoreBlockNow:'rgba(100, 210, 255, 0.32)',  // note currently under the playhead
+  scoreBlockEdge: 'rgba(10, 132, 255, 0.65)',
+  scoreLabel:   '#d6e8f7',
 } as const;
 const DEFAULT_CENTS_TOLERANCE_GOOD = 6;   // ≤6¢ → green (trained musician threshold)
 const DEFAULT_CENTS_TOLERANCE_MED  = 15;  // ≤15¢ → yellow (perceptible to average listener)
@@ -1226,6 +1226,7 @@ function updateTuner(freq: number): void {
   const { tunerNote, tunerCents, tunerNeedle, tunerStrings } = state.els;
   if (freq <= 0) {
     tunerNote.textContent = '—';
+    tunerNote.classList.add('placeholder');
     tunerCents.textContent = '拉一个音…';
     tunerCents.className = 'tuner-cents';
     tunerNeedle.style.left = '50%';
@@ -1237,6 +1238,7 @@ function updateTuner(freq: number): void {
   const nearest = Math.round(midi);
   const cents = Math.round((midi - nearest) * 100);
   tunerNote.textContent = midiToNoteName(nearest);
+  tunerNote.classList.remove('placeholder');
 
   const absC = Math.abs(cents);
   const band = absC <= state.centsToleranceGood ? 'good'

@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Pavlov Cat</title>
-  <meta name="theme-color" content="#5a7a5a" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f7" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161617" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -178,7 +179,7 @@
 
       <div id="tuner-view" class="hidden">
         <div class="tuner-card">
-          <div class="tuner-note" id="tuner-note">—</div>
+          <div class="tuner-note placeholder" id="tuner-note">—</div>
           <div class="tuner-cents" id="tuner-cents">按「开始」并拉一个空弦</div>
           <div class="tuner-bar">
             <div class="tuner-center"></div>
