@@ -166,6 +166,7 @@ const state = {
 
   // Microphone input device (Mac mini has no built-in mic → pick iPhone etc.)
   micDeviceId: null as string | null,
+  micError: null as string | null,      // shown centered on the stage when set
 
   // Audio recording (download a take to keep / send to a teacher)
   recorder: null as MediaRecorder | null,
@@ -510,17 +511,22 @@ async function ensureCtx(): Promise<AudioContext> {
 }
 
 // Open a mic stream honouring the chosen input device. echo/noise/gain
-// processing is disabled so the raw pitch reaches the detector.
-function openMicStream(): Promise<MediaStream> {
+// processing is disabled so the raw pitch reaches the detector. If the saved
+// device has vanished (e.g. the iPhone continuity mic walked away), fall back
+// to the system default instead of failing outright.
+async function openMicStream(): Promise<MediaStream> {
+  const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const id = state.micDeviceId;
-  return navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: id ? { exact: id } : undefined,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-    },
-  });
+  if (id) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: id } } });
+    } catch {
+      state.micDeviceId = null;
+      saveSettings();
+      if (state.els) state.els.micSelect.value = '';
+    }
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: base });
 }
 
 async function start(): Promise<void> {
@@ -530,10 +536,24 @@ async function start(): Promise<void> {
 
   try {
     state.micStream = await openMicStream();
-  } catch {
-    setStatus('无法访问麦克风,请检查权限或换一个输入设备');
+  } catch (e) {
+    const name = e instanceof DOMException ? e.name : '';
+    let msg: string;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      msg = '浏览器拒绝了麦克风权限 — 点地址栏右侧的图标改为「允许」,再按开始';
+    } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+      msg = '没有找到麦克风 — Mac 可用 iPhone 连续互通收音:⚙ → 设备 → 点 ? 看设置方法';
+    } else {
+      msg = '无法访问麦克风,请检查权限或换一个输入设备';
+    }
+    state.micError = msg;
+    setStatus(msg, true);
+    updateStartBtn();
+    drawOnce();
     return;
   }
+  state.micError = null;
+  setStatus('');
 
   const ctx = state.ctx!;
   state.micSource = ctx.createMediaStreamSource(state.micStream);
@@ -1073,22 +1093,43 @@ function drawOnce(): void {
   ctx2d.lineTo(playheadX, bottomY + 4);
   ctx2d.stroke();
   ctx2d.restore();
+
+  // Mic failure: say it loudly where the user is actually looking.
+  if (state.micError && !state.running) {
+    ctx2d.save();
+    ctx2d.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx2d.fillRect(0, 0, W, H);
+    ctx2d.textAlign = 'center';
+    ctx2d.textBaseline = 'middle';
+    ctx2d.font = `600 ${Math.round(15 * scale)}px -apple-system, system-ui, sans-serif`;
+    ctx2d.fillStyle = '#ff9f0a';
+    ctx2d.fillText('⚠ 无法开始', W / 2, H / 2 - 16 * scale);
+    ctx2d.font = `${Math.round(13 * scale)}px -apple-system, system-ui, sans-serif`;
+    ctx2d.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx2d.fillText(state.micError, W / 2, H / 2 + 10 * scale);
+    ctx2d.restore();
+  }
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────
-function setStatus(msg: string): void {
-  if (state.els) state.els.statusEl.textContent = msg;
+function setStatus(msg: string, isError = false): void {
+  if (!state.els) return;
+  state.els.statusEl.textContent = msg;
+  state.els.statusEl.classList.toggle('error', isError && !!msg);
 }
 
 function updateStartBtn(): void {
   if (!state.els) return;
+  // A ctx without an analyser = mic never opened (failed start / drone-only) —
+  // that's still "开始", not "继续".
+  const resumable = !!state.ctx && !!state.analyser;
   let label: string;
   if (state.running) label = '⏸ 暂停';
-  else if (state.ctx) label = '▶ 继续';
+  else if (resumable) label = '▶ 继续';
   else label = '▶ 开始';
   state.els.startBtn.textContent = label;
   // Tuner has its own start button; when tuning, "暂停" reads oddly, so show 停止.
-  state.els.tunerStartBtn.textContent = state.running ? '⏸ 停止' : (state.ctx ? '▶ 继续' : '▶ 开始');
+  state.els.tunerStartBtn.textContent = state.running ? '⏸ 停止' : (resumable ? '▶ 继续' : '▶ 开始');
   state.refreshPanCursor?.();
 }
 
@@ -1298,7 +1339,12 @@ function selectMode(tab: TabMode): void {
       }
       state.viewMode = 'tuner';
       if (!state.running && !state.ctx) {
-        void start().then(() => { if (!state.running) state.els!.tunerCents.textContent = '无法访问麦克风,请检查权限或设备'; });
+        void start().then(() => {
+          if (!state.running) {
+            state.els!.tunerCents.textContent = state.micError ?? '无法访问麦克风,请检查权限或设备';
+            state.els!.tunerCents.className = 'tuner-cents bad';
+          }
+        });
       }
     }
   } else {
@@ -1328,9 +1374,12 @@ function selectMode(tab: TabMode): void {
 }
 
 // Cycle through the three button states: idle → running → paused → running …
+// A ctx without an analyser means the last start() failed at mic acquisition
+// (e.g. pressing the drone created the ctx) — retry the mic instead of
+// "resuming" into a session that would record nothing.
 function togglePlayPause(): void {
   if (state.running) pause();
-  else if (state.ctx) resume();
+  else if (state.ctx && state.analyser) resume();
   else start();
 }
 

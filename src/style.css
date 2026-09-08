@@ -513,6 +513,11 @@ input[type='number']:focus {
   color: var(--secondary);
 }
 
+.rt-status.error {
+  color: var(--red);
+  font-weight: 600;
+}
+
 /* ── Practice report — grouped inset card ───────────────────────────────── */
 .rt-report {
   margin-top: 12px;
