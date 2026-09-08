@@ -766,9 +766,14 @@ function detectStep(): void {
   for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
   const rms = Math.sqrt(sum / buf.length);
   const f = detectPitch(buf, state.ctx.sampleRate);
-  histPush(state.ctx.currentTime, f, rms);
   updatePitchReadout(f);
-  if (state.viewMode === 'tuner') updateTuner(f);
+  // Tuner mode: readout + needle only — no trail recording, no metronome.
+  // The practice timeline is frozen by setViewMode while tuning.
+  if (state.viewMode === 'tuner') {
+    updateTuner(f);
+    return;
+  }
+  histPush(state.ctx.currentTime, f, rms);
   scheduleMetronome();
 }
 
@@ -1255,19 +1260,34 @@ function updateTuner(freq: number): void {
 }
 
 // Switch between the practice scope and the tuner. Entering the tuner starts
-// the mic automatically so a beginner just sees a working tuner.
+// the mic automatically so a beginner just sees a working tuner. The practice
+// timeline is frozen while tuning (detectStep also skips histPush/metronome in
+// tuner mode) so tuning noise neither pollutes the trail nor advances the clock.
 function setViewMode(mode: ViewMode): void {
-  if (!state.els) return;
+  if (!state.els || mode === state.viewMode) return;
+  const spb = 60 / state.bpm;
+  if (mode === 'tuner' && state.running && state.ctx) {
+    state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / spb;
+  }
   state.viewMode = mode;
   state.els.modeTabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
   state.els.practiceView.classList.toggle('hidden', mode !== 'practice');
   state.els.tunerView.classList.toggle('hidden', mode !== 'tuner');
-  if (mode === 'tuner') {
-    if (!state.running && !state.ctx) {
-      void start().then(() => { if (!state.running) state.els!.tunerCents.textContent = '无法访问麦克风,请检查权限或设备'; });
-    }
-    resizeCanvas();
+  if (mode === 'practice' && state.running && state.ctx) {
+    // Continue from where the practice clock was frozen (same math as resume()).
+    // A fresh session started in the tuner has frozen=0 → begin at beat 0 so the
+    // first metronome accent isn't skipped.
+    state.startTime = state.ctx.currentTime - state.frozenElapsedBeats * spb;
+    const nextBeat = state.frozenElapsedBeats <= 0 ? 0 : Math.floor(state.frozenElapsedBeats) + 1;
+    state.nextTickBeat = nextBeat;
+    state.nextTickTime = Math.max(state.startTime + nextBeat * spb, state.ctx.currentTime + 0.05);
   }
+  if (mode === 'tuner' && !state.running && !state.ctx) {
+    void start().then(() => { if (!state.running) state.els!.tunerCents.textContent = '无法访问麦克风,请检查权限或设备'; });
+  }
+  // Canvas sizes to whichever view is visible now; while practice was hidden
+  // its wrap measured 0 and the canvas fell to the 320px floor.
+  resizeCanvas();
 }
 
 // Cycle through the three button states: idle → running → paused → running …
