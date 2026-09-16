@@ -74,3 +74,27 @@ what's MIDI-certain vs image-inferred, and any conflicts. Then `rm -rf "$workdir
 Notes: no MIDI → OMR from images alone, lower accuracy (say so). Dense scores →
 transcribe in small chunks. This is assistive OMR: deliver a solid first pass plus
 a list of what to double-check.
+
+## 经验(2026-09 Tori no Uta 实测)
+
+**SVG 里有精确几何,别只靠看图。** MuseScore 导出的 SVG 每个 `<path>` 带类名
+(`Note` `TieSegment` `SlurSegment` `Beam` `Accidental` `Rest` `Dynamic` `StaffText`
+`TimeSig` `KeySig` `BarLine` `StaffLines` ...),用
+`python3.13 <skill>/scripts/svg_geometry.py page_NN.svg geo_NN.json` 拿到每个图元的
+包围盒,然后:
+- 符头按谱表(StaffLines 每 5 条一组)分组、按 x 排序,与 MIDI 音符顺序一一对齐;
+  符头 y 相对中线换算音级,可 100% 校验同音异名拼写(本例"升号方向"规则零错位)。
+- `TieSegment` 与 `SlurSegment` 类名直接区分延音线/连线;弧线左右端点对到最近符头。
+  同音高的弧连的符头就是"谱面把一个音写成两个连音符头"(MIDI 里是一个音),要按图拆分。
+  跨行/跨页的延音线是两段,右端无符头即接下一行第一个符头。
+- `Beam` 子路径按 x 重叠聚成组 → 每组覆盖哪些符头 = 谱面符杠分组;music21 默认按拍分
+  组,MuseScore 默认八分按半拍组、十六分按拍组,不一致时以图为准,手动设 `note.beams`
+  并置 `streamStatus.beams=True`。
+- 变音记号/力度/文字按 x 找右侧最近符头定位到小节与拍。
+- 起拍小节:music21 用 `Measure.paddingLeft`,导出后手动把 `implicit="no"` 改 `"yes"`。
+- `part.makeAccidentals(inPlace=True, cautionaryNotImmediateRepeat=False)` 才和
+  MuseScore 的显示规则一致。
+- 本机有 `/opt/homebrew/bin/mscore`(MuseScore 4):`mscore -o out.png in.musicxml` 可
+  渲染成 PNG 与原谱逐页对比(输出 out-1.png…,10200×13200 透明底,先缩放再看)。
+- 没有 `mido`,解析 MIDI 元事件用 `music21.midi.MidiFile`(事件 type 是数字:0x58 拍号
+  0x59 调号 0x51 速度)。
