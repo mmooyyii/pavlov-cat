@@ -29,6 +29,8 @@ import tempfile
 import zipfile
 
 PREFIX_GLOB = os.path.expanduser("~/Downloads/musescore-dl_*.zip")
+SCORES_DIR = os.path.expanduser(
+    "~/Library/Mobile Documents/com~apple~CloudDocs/Documents/MuseScore4/Scores")
 ASSET_SUFFIXES = (".svg", ".png", ".mid", ".midi", ".json")
 
 
@@ -98,11 +100,12 @@ def main():
     has_midi = any(f.lower().endswith((".mid", ".midi")) for f in files)
     title = title_from(workdir, source)
 
-    # Suggested output: next to the source (e.g. the zip in ~/Downloads),
-    # named after the title. The caller/user may override.
+    # Output goes to the MuseScore 4 iCloud score library (where the user keeps
+    # all scores). Fall back to the source directory if that library is absent.
     src_dir = os.path.dirname(os.path.abspath(source if os.path.isfile(source) else source))
+    out_dir = SCORES_DIR if os.path.isdir(SCORES_DIR) else src_dir
     safe_title = "".join(c for c in title if c not in '\\/:*?"<>|').strip() or "score"
-    output = os.path.join(src_dir, safe_title + ".musicxml")
+    output = os.path.join(out_dir, safe_title + ".musicxml")
 
     print(f"临时目录: {workdir}", file=sys.stderr)
     print(f"页面 {len(pages)} 张, MIDI {'有' if has_midi else '无'}, 建议成品: {output}", file=sys.stderr)

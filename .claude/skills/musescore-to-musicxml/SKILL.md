@@ -15,7 +15,10 @@ then click the "⬇ 下载谱面素材" button on the musescore.com score page.
 
 **Tools:** use **`python3.13`** (has `music21`); `rsvg-convert` for SVG raster.
 **Disk hygiene:** all intermediates live in a temp workdir that you delete at the
-end (step 8). The ONLY lasting write is the final `.musicxml`.
+end (step 8). The ONLY lasting write is the final `.musicxml`, which goes into the
+MuseScore 4 iCloud library `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/MuseScore4/Scores/`
+(`prepare_input.py` already puts that in `output`; check for a same-name file first).
+Do NOT leave the result in `~/Downloads`.
 
 **Fidelity:** pitch, rhythm, tempo, key/time, parts come from the MIDI (high
 confidence). Slurs, dynamics, articulations, beaming, lyrics, layout are inferred
@@ -67,7 +70,8 @@ step/alter/octave to match both the sounding pitch and the key; multiple voices 
 
 **7. Validate.** `python3.13 <skill>/scripts/validate_musicxml.py "$output" --expect-measures N --expect-parts N`. Fix any errors.
 
-**8. Report & clean up.** Tell the user the `output` path, measures/parts/notes,
+**8. Report & clean up.** Confirm the file landed in the Scores library; tell the
+user the `output` path, measures/parts/notes,
 what's MIDI-certain vs image-inferred, and any conflicts. Then `rm -rf "$workdir"`
 (leave the source zip). 
 
