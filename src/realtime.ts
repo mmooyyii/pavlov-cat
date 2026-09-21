@@ -7,6 +7,7 @@ import {
 import { Drone, type DroneMode } from './drone';
 import { analyze, analyzeRhythm, type CentsEntry, type Report } from './report';
 import { parseMusicXml } from './musicxml';
+import { scoresAll, scoresPut, scoresDelete, type ScoreEntry } from './library';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -156,7 +157,10 @@ const state = {
   refMode: 'chromatic' as RefMode,
   keyIndex: 0,                          // index into COMMON_KEYS
   temperament: 'equal' as Temperament,
-  track: null as TargetTrack | null,    // loaded MusicXML score
+  track: null as TargetTrack | null,    // active score (mirror of the selected library entry)
+  library: [] as ScoreEntry[],          // imported scores, sorted by title
+  scoreId: null as string | null,       // library id of the active score
+  collapsedDirs: new Set<string>(),     // folded folders in the library tree
 
   // Reference drone (sustained tone to tune against)
   drone: null as Drone | null,
@@ -219,7 +223,11 @@ const state = {
     rangeRow: HTMLElement;
     scoreControls: HTMLElement;
     fileInput: HTMLInputElement;
-    scoreTitle: HTMLElement;
+    dirInput: HTMLInputElement;
+    scoreBtn: HTMLButtonElement;
+    scoreName: HTMLElement;
+    scorePanel: HTMLElement;
+    scoreTree: HTMLElement;
     settingsBtn: HTMLButtonElement;
     settingsPanel: HTMLElement;
     metronomeToggles: NodeListOf<HTMLButtonElement>;
@@ -291,6 +299,7 @@ function loadSettings(): void {
   if ('keyIndex' in data) state.keyIndex = clampInt(data.keyIndex, 0, COMMON_KEYS.length - 1, 0);
   if (data.temperament === 'equal' || data.temperament === 'just') state.temperament = data.temperament;
   if (typeof data.micLatency === 'number' && data.micLatency >= 0 && data.micLatency <= 0.5) state.micLatency = data.micLatency;
+  if (typeof data.scoreId === 'string') state.scoreId = data.scoreId;
 }
 
 function saveSettings(): void {
@@ -314,6 +323,7 @@ function saveSettings(): void {
       keyIndex: state.keyIndex,
       temperament: state.temperament,
       micLatency: state.micLatency,
+      scoreId: state.scoreId,
     }));
   } catch { /* quota / private mode — ignore */ }
 }
@@ -586,50 +596,238 @@ async function applyDrone(): Promise<void> {
   state.drone?.set(state.droneMode, state.droneRootMidi, state.droneVol);
 }
 
-// ── Score import (MusicXML) ──────────────────────────────────────────────────
-const SCORE_KEY = 'pavlov-cat:score:v1';
+// ── Score library (MusicXML) ─────────────────────────────────────────────────
+// Scores are imported a folder at a time and kept in IndexedDB, so the picker
+// in the toolbar is the only thing the user touches when switching pieces.
+const LEGACY_SCORE_KEY = 'pavlov-cat:score:v1';   // pre-library single score
+const SCORE_EXT = /\.(musicxml|xml)$/i;
 
-function setScoreTitle(): void {
-  if (!state.els) return;
-  state.els.scoreTitle.textContent = state.track
-    ? `${state.track.title} · ${state.track.notes.length} 音`
-    : '未导入';
+// Path relative to the picked folder (falls back to the bare name for a
+// single-file import). Doubles as the library key, so re-importing the same
+// folder updates entries in place instead of duplicating them.
+function scoreIdOf(file: File): string {
+  const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  return rel && rel.length ? rel : file.name;
 }
 
-async function loadScoreFile(file: File): Promise<void> {
-  if (/\.mxl$/i.test(file.name)) {
-    setStatus('暂不支持 .mxl 压缩谱,请在打谱软件里导出「未压缩的 MusicXML(.musicxml)」');
-    return;
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, c => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+}
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/"/g, '&quot;');
+}
+
+// ── Library browser: the folder tree ─────────────────────────────────────────
+// Entry ids are folder-relative paths, so the tree the user picked on disk can
+// be rebuilt verbatim — practice folders ("音阶/", "巴赫/") stay meaningful
+// instead of collapsing into one long list.
+interface DirNode {
+  name: string;
+  path: string;
+  dirs: Map<string, DirNode>;
+  files: ScoreEntry[];
+}
+
+function newDir(name: string, path: string): DirNode {
+  return { name, path, dirs: new Map(), files: [] };
+}
+
+function buildTree(entries: readonly ScoreEntry[]): DirNode {
+  const root = newDir('', '');
+  for (const e of entries) {
+    const segs = e.id.split('/');
+    let node = root;
+    for (const seg of segs.slice(0, -1)) {
+      let child = node.dirs.get(seg);
+      if (!child) { child = newDir(seg, node.path ? `${node.path}/${seg}` : seg); node.dirs.set(seg, child); }
+      node = child;
+    }
+    node.files.push(e);
   }
-  let track;
-  try {
-    const text = await file.text();
-    track = parseMusicXml(text, file.name.replace(/\.[^.]+$/, ''));
-  } catch (e) {
-    setStatus(e instanceof Error ? e.message : '乐谱导入失败');
-    return;
+  return root;
+}
+
+// A lone root folder (the common case — one import) adds a level of nesting
+// that says nothing, so unwrap it.
+function treeRoots(root: DirNode): DirNode {
+  return root.files.length === 0 && root.dirs.size === 1
+    ? treeRoots([...root.dirs.values()][0])
+    : root;
+}
+
+function renderDir(node: DirNode, depth: number): string {
+  const out: string[] = [];
+  const dirs = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  for (const d of dirs) {
+    const open = !state.collapsedDirs.has(d.path);
+    const count = countFiles(d);
+    out.push(
+      `<div class="tree-row tree-dir" data-dir="${escapeAttr(d.path)}" style="--depth:${depth}">` +
+        `<span class="tree-caret${open ? ' open' : ''}">▸</span>` +
+        `<span class="tree-name">${escapeHtml(d.name)}</span>` +
+        `<span class="tree-count">${count}</span>` +
+      `</div>`,
+    );
+    if (open) out.push(renderDir(d, depth + 1));
   }
-  state.track = track;
-  setScoreTitle();
-  if (track.bpm) {
-    state.bpm = Math.max(40, Math.min(220, Math.round(track.bpm)));
-    state.els!.bpmInput.value = String(state.bpm);
+  for (const f of [...node.files].sort((a, b) => a.title.localeCompare(b.title, 'zh'))) {
+    const active = f.id === state.scoreId;
+    out.push(
+      `<div class="tree-row tree-file${active ? ' active' : ''}" data-id="${escapeAttr(f.id)}" style="--depth:${depth}" title="${escapeAttr(f.id)}">` +
+        `<span class="tree-name">${escapeHtml(f.title)}</span>` +
+        `<span class="tree-count">${f.track.notes.length} 音</span>` +
+        `<button class="tree-del" type="button" data-del="${escapeAttr(f.id)}" title="从曲库移除" aria-label="移除 ${escapeAttr(f.title)}">✕</button>` +
+      `</div>`,
+    );
   }
-  try { localStorage.setItem(SCORE_KEY, JSON.stringify(track)); } catch { /* */ }
+  return out.join('');
+}
+
+function countFiles(node: DirNode): number {
+  let n = node.files.length;
+  for (const d of node.dirs.values()) n += countFiles(d);
+  return n;
+}
+
+function refreshScoreUi(): void {
+  if (!state.els) return;
+  const active = state.library.find(e => e.id === state.scoreId) ?? null;
+  state.els.scoreName.textContent = active
+    ? active.title
+    : state.library.length ? '选一首…' : '曲库为空';
+  state.els.scoreBtn.classList.toggle('placeholder', !active);
+
+  state.els.scoreTree.innerHTML = state.library.length
+    ? renderDir(treeRoots(buildTree(state.library)), 0)
+    : '<p class="tree-empty">还没有乐谱。点上面「📁 文件夹」,选一个装 .musicxml 的文件夹,整个文件夹连同子目录一次导入。</p>';
+}
+
+function toggleScorePanel(show?: boolean): void {
+  if (!state.els) return;
+  const panel = state.els.scorePanel;
+  const next = show ?? panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !next);
+  state.els.scoreBtn.setAttribute('aria-expanded', String(next));
+  if (next) {
+    // Reveal the active score: expand its ancestors, then scroll it into view.
+    if (state.scoreId) {
+      const segs = state.scoreId.split('/').slice(0, -1);
+      let path = '';
+      for (const seg of segs) { path = path ? `${path}/${seg}` : seg; state.collapsedDirs.delete(path); }
+      refreshScoreUi();
+    }
+    // The panel only gets a layout after this frame, so scroll on the next one.
+    requestAnimationFrame(() => {
+      state.els?.scoreTree.querySelector('.tree-file.active')?.scrollIntoView({ block: 'nearest' });
+    });
+  }
+}
+
+// Make an entry the active score: adopt its notes, follow its tempo, rewind.
+function selectScore(id: string | null, { rewind = true } = {}): void {
+  const entry = id == null ? null : state.library.find(e => e.id === id) ?? null;
+  state.scoreId = entry?.id ?? null;
+  state.track = entry?.track ?? null;
+  if (entry?.track.bpm) {
+    state.bpm = Math.max(40, Math.min(220, Math.round(entry.track.bpm)));
+    if (state.els) state.els.bpmInput.value = String(state.bpm);
+  }
+  refreshScoreUi();
   saveSettings();
-  clearData();               // play from the top
-  setStatus(`已导入:${track.title}`);
+  if (rewind) clearData();     // play the new piece from the top
   drawOnce();
 }
 
-function loadSavedScore(): void {
-  let raw: string | null = null;
-  try { raw = localStorage.getItem(SCORE_KEY); } catch { return; }
-  if (!raw) return;
+// Parse a batch of files into library entries, reporting what didn't make it.
+// One bad file in a folder of fifty must not sink the import.
+async function importScoreFiles(files: readonly File[]): Promise<void> {
+  const candidates = files.filter(f => SCORE_EXT.test(f.name));
+  const mxlCount = files.filter(f => /\.mxl$/i.test(f.name)).length;
+  if (!candidates.length) {
+    setStatus(mxlCount
+      ? `没找到可用乐谱:${mxlCount} 个 .mxl 是压缩谱,请在打谱软件里导出「未压缩的 MusicXML(.musicxml)」`
+      : '这个文件夹里没有 .musicxml / .xml 乐谱');
+    return;
+  }
+
+  setStatus(`正在导入 ${candidates.length} 个乐谱…`);
+  const entries: ScoreEntry[] = [];
+  const failed: string[] = [];
+  for (const file of candidates) {
+    try {
+      const text = await file.text();
+      const track = parseMusicXml(text, file.name.replace(/\.[^.]+$/, ''));
+      entries.push({ id: scoreIdOf(file), title: track.title, track, addedAt: Date.now() });
+    } catch {
+      failed.push(file.name);
+    }
+  }
+  if (!entries.length) {
+    setStatus(`导入失败:${failed.length} 个文件都解析不了`);
+    return;
+  }
+
   try {
-    const t = JSON.parse(raw) as TargetTrack;
-    if (t && Array.isArray(t.notes) && t.notes.length) state.track = t;
-  } catch { /* */ }
+    await scoresPut(entries);
+    state.library = await scoresAll();
+  } catch (e) {
+    setStatus(e instanceof Error ? e.message : '曲库写入失败');
+    return;
+  }
+
+  // Land on the first newly imported piece so the user hears something at once.
+  const firstId = state.library.find(e => entries.some(n => n.id === e.id))?.id ?? entries[0].id;
+  selectScore(firstId);
+
+  const parts = [`已导入 ${entries.length} 首`];
+  if (failed.length) parts.push(`${failed.length} 首解析失败`);
+  if (mxlCount) parts.push(`跳过 ${mxlCount} 个 .mxl 压缩谱`);
+  setStatus(`${parts.join(',')} · 曲库共 ${state.library.length} 首`);
+}
+
+async function removeScore(id: string): Promise<void> {
+  const gone = state.library.find(e => e.id === id);
+  try {
+    await scoresDelete(id);
+    state.library = await scoresAll();
+  } catch {
+    setStatus('删除失败');
+    return;
+  }
+  // Only the active piece needs re-picking; removing any other just redraws.
+  if (state.scoreId === id) selectScore(state.library[0]?.id ?? null);
+  else refreshScoreUi();
+  setStatus(gone ? `已移除:${gone.title}` : '已移除');
+}
+
+// Load the library at boot, migrating the single score older versions kept in
+// localStorage so an upgrading user doesn't lose the piece they were on.
+async function initLibrary(): Promise<void> {
+  let legacy: ScoreEntry | null = null;
+  try {
+    const raw = localStorage.getItem(LEGACY_SCORE_KEY);
+    if (raw) {
+      const t = JSON.parse(raw) as TargetTrack;
+      if (t && Array.isArray(t.notes) && t.notes.length) {
+        legacy = { id: `${t.title}.musicxml`, title: t.title, track: t, addedAt: Date.now() };
+      }
+    }
+  } catch { /* unreadable legacy payload — nothing to migrate */ }
+
+  try {
+    if (legacy) await scoresPut([legacy]);
+    state.library = await scoresAll();
+  } catch {
+    return;   // private mode / blocked IndexedDB — score mode stays empty
+  }
+  if (legacy) { try { localStorage.removeItem(LEGACY_SCORE_KEY); } catch { /* */ } }
+
+  const pick = state.library.find(e => e.id === state.scoreId)?.id
+    ?? legacy?.id
+    ?? state.library[0]?.id
+    ?? null;
+  // Boot-time restore: don't rewind, the session hasn't started yet.
+  selectScore(pick, { rewind: false });
 }
 
 // ── Microphone device picker ────────────────────────────────────────────────
@@ -1320,6 +1518,7 @@ function updateModeUi(): void {
   state.els.tunerView.classList.toggle('hidden', state.viewMode !== 'tuner');
   state.els.scaleControls.classList.toggle('hidden', state.refMode !== 'scale');
   state.els.scoreControls.classList.toggle('hidden', state.refMode !== 'score');
+  if (state.refMode !== 'score') toggleScorePanel(false);   // don't reopen on return
   state.els.temperamentRow.classList.toggle('hidden', state.refMode !== 'scale');
   state.els.rangeRow.classList.toggle('hidden', state.refMode === 'score');
 }
@@ -1420,7 +1619,11 @@ export function initRealtime(): void {
     rangeRow: document.getElementById('rt-range-row') as HTMLElement,
     scoreControls: document.getElementById('rt-score-controls') as HTMLElement,
     fileInput: document.getElementById('rt-file') as HTMLInputElement,
-    scoreTitle: document.getElementById('rt-score-title') as HTMLElement,
+    dirInput: document.getElementById('rt-dir') as HTMLInputElement,
+    scoreBtn: document.getElementById('rt-score-btn') as HTMLButtonElement,
+    scoreName: document.getElementById('rt-score-name') as HTMLElement,
+    scorePanel: document.getElementById('rt-score-panel') as HTMLElement,
+    scoreTree: document.getElementById('rt-score-tree') as HTMLElement,
     settingsBtn: document.getElementById('rt-settings-btn') as HTMLButtonElement,
     settingsPanel: document.getElementById('rt-settings-panel') as HTMLElement,
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
@@ -1478,29 +1681,65 @@ export function initRealtime(): void {
     .map((k, i) => `<option value="${i}">${k.label}</option>`).join('');
   state.els.keySelect.value = String(state.keyIndex);
 
-  loadSavedScore();
-  setScoreTitle();
+  refreshScoreUi();     // empty-state placeholder until IndexedDB answers
+  void initLibrary();
   updateModeUi();   // reflect the persisted refMode in tabs + contextual controls
 
   // ⚙ settings popover: toggle on the gear, dismiss on outside click / Esc.
   state.els.settingsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    toggleScorePanel(false);   // never two popovers at once
     state.els!.settingsPanel.classList.toggle('hidden');
   });
   document.addEventListener('click', (e) => {
     const panel = state.els!.settingsPanel;
-    if (panel.classList.contains('hidden')) return;
-    const t = e.target as Node;
-    if (!panel.contains(t) && t !== state.els!.settingsBtn) panel.classList.add('hidden');
+    if (!panel.classList.contains('hidden')) {
+      const t = e.target as Node;
+      if (!panel.contains(t) && t !== state.els!.settingsBtn) panel.classList.add('hidden');
+    }
+    toggleScorePanel(false);   // its own clicks stop propagating before this
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') state.els!.settingsPanel.classList.add('hidden');
+    if (e.key !== 'Escape') return;
+    state.els!.settingsPanel.classList.add('hidden');
+    toggleScorePanel(false);
   });
 
-  state.els.fileInput.addEventListener('change', () => {
-    const f = state.els!.fileInput.files?.[0];
-    if (f) void loadScoreFile(f);
-    state.els!.fileInput.value = '';   // allow re-importing the same file
+  // Both inputs feed the same batch importer; the folder one just arrives with
+  // more files. Clearing .value lets the same folder be re-picked to re-sync.
+  const onScoreFiles = (input: HTMLInputElement) => () => {
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length) void importScoreFiles(files);
+  };
+  state.els.fileInput.addEventListener('change', onScoreFiles(state.els.fileInput));
+  state.els.dirInput.addEventListener('change', onScoreFiles(state.els.dirInput));
+
+  state.els.scoreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.els!.settingsPanel.classList.add('hidden');
+    toggleScorePanel();
+  });
+  // Keep clicks inside the panel (import labels, tree rows) from dismissing it.
+  state.els.scorePanel.addEventListener('click', e => e.stopPropagation());
+
+  // One delegated handler for the whole tree: remove ✕, fold a folder, or pick.
+  state.els.scoreTree.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    const del = target.closest<HTMLElement>('.tree-del');
+    if (del?.dataset.del) { void removeScore(del.dataset.del); return; }
+
+    const row = target.closest<HTMLElement>('.tree-row');
+    if (!row) return;
+    if (row.dataset.dir != null) {
+      const path = row.dataset.dir;
+      if (state.collapsedDirs.has(path)) state.collapsedDirs.delete(path);
+      else state.collapsedDirs.add(path);
+      refreshScoreUi();
+    } else if (row.dataset.id) {
+      selectScore(row.dataset.id);
+      toggleScorePanel(false);
+    }
   });
 
   state.els.keySelect.addEventListener('change', () => {

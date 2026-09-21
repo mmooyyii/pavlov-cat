@@ -367,14 +367,134 @@ input[type='number']:focus {
 .rt-file-btn:hover { background: var(--accent-press); }
 .rt-file-btn:active { transform: scale(0.96); }
 
-.rt-score-title {
+/* Score picker: shows the current piece, opens the library tree. Looks like a
+   pop-up button because that's what it behaves like. */
+.rt-score-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 7px;
+  background: var(--surface-inset);
+  font-family: inherit;
   font-size: 13px;
-  color: var(--secondary);
-  max-width: 220px;
+  font-weight: 500;
+  color: var(--label);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.rt-score-btn:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.rt-score-btn.placeholder { color: var(--tertiary); }
+.rt-score-btn #rt-score-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rt-score-caret { color: var(--tertiary); font-size: 10px; flex: 0 0 auto; }
+
+/* Library popover: anchored to the toolbar like the ⚙ panel, but left-aligned
+   under the picker rather than pinned to the right edge. */
+.score-panel {
+  right: auto;
+  left: 0;
+  width: 340px;
+  padding: 4px 8px 8px;
+}
+
+.score-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 10px 8px;
+  border-bottom: 0.5px solid var(--separator);
+}
+.score-panel-head .sp-title { margin-bottom: 0; }
+
+.score-tree {
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 6px 0 2px;
+}
+
+.tree-empty {
+  margin: 0;
+  padding: 14px 10px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--tertiary);
+}
+
+/* Rows indent by nesting depth; folders and scores share the same metrics so
+   the tree reads as one column. */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px calc(8px + var(--depth, 0) * 14px);
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.tree-row:hover { background: var(--fill); }
+
+.tree-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-dir { font-weight: 600; color: var(--secondary); }
+.tree-caret {
+  display: inline-block;      /* inline boxes ignore transform */
+  flex: 0 0 auto;
+  width: 10px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--secondary);
+  transition: transform 0.15s ease;
+}
+.tree-caret.open { transform: rotate(90deg); }
+
+.tree-file { color: var(--label); }
+.tree-file.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.tree-file.active .tree-count { color: color-mix(in srgb, var(--accent) 70%, transparent); }
+
+/* Remove button stays out of the way until the row is hovered/focused. */
+.tree-del {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tertiary);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.tree-row:hover .tree-del { opacity: 1; }
+.tree-del:focus-visible { opacity: 1; }
+.tree-del:hover { background: var(--fill-strong); color: var(--label); }
 
 /* Mic-setup help: tiny "?" toggles an inset panel */
 .rt-help-btn {
@@ -762,6 +882,12 @@ input[type='number']:focus {
   }
   .tb-spacer { display: none; }
   .rt-gear-btn { position: absolute; top: 10px; right: 12px; }
+
+  /* Picker takes the row's slack; its popover becomes a bottom sheet too. */
+  .rt-score-btn { flex: 1 1 auto; max-width: none; min-width: 0; min-height: 34px; }
+  .score-panel { left: 8px; width: auto; }
+  .score-tree { max-height: 52vh; }
+  .tree-del { opacity: 1; }          /* no hover on touch */
 
   /* Settings popover becomes a bottom sheet. */
   .settings-panel {
