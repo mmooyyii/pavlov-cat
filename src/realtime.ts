@@ -152,6 +152,7 @@ const state = {
   timeUnit: 'beat' as TimeUnit,
   accentEvery: 4,
   countInBeats: 0,                      // empty beats clicked off before the run starts
+  runStartBeat: 0,                      // beat this run resumes at; the clock is held here during the count-in
   metronomeOn: false,
   pitchJudge: true,                     // when off, all dots use neutral color
   visibleBeats: DEFAULT_VISIBLE_BEATS,
@@ -391,6 +392,26 @@ function histForEach(cb: (t: number, f: number, v: number) => void): void {
   }
 }
 
+// ── Transport clock ─────────────────────────────────────────────────────────
+// The raw clock runs ahead of the run's start beat during a count-in: it sits
+// at runStartBeat − N and climbs to runStartBeat as the empty beats tick by.
+function rawBeat(): number {
+  if (!state.ctx) return 0;
+  return (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
+}
+
+// What everything else should treat as "now". Clamping to runStartBeat is what
+// keeps the playhead parked during the count-in instead of rewinding.
+function currentBeat(): number {
+  return Math.max(state.runStartBeat, rawBeat());
+}
+
+/** Beats left in the count-in; 0 once the run is properly under way. */
+function countInLeft(): number {
+  if (!state.running || !state.ctx) return 0;
+  return Math.max(0, state.runStartBeat - rawBeat());
+}
+
 // ── Metronome ──────────────────────────────────────────────────────────────
 function scheduleMetronome(): void {
   if (!state.ctx) return;
@@ -607,10 +628,11 @@ async function start(): Promise<void> {
 
   histClear();
 
-  // Count-in: push beat 0 out by N beats so the run starts at negative time.
-  // The metronome starts ticking immediately at beat −N; the playhead reaches
-  // the first beat when the count-in ends.
+  // Count-in: the clock starts N beats early so it can climb to beat 0 while
+  // the metronome ticks. currentBeat() pins the playhead at 0 meanwhile, so
+  // nothing moves on screen until the count-in is done.
   const spb = 60 / state.bpm;
+  state.runStartBeat = 0;
   state.startTime = ctx.currentTime + 0.1 + state.countInBeats * spb;
   state.nextTickBeat = -state.countInBeats;
   state.nextTickTime = state.startTime + state.nextTickBeat * spb;
@@ -934,7 +956,7 @@ async function switchMic(deviceId: string): Promise<void> {
 // by 重来, which pauses only as a step on its way back to the top.
 async function pause({ summary = true } = {}): Promise<void> {
   if (!state.running || !state.ctx) return;
-  state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
+  state.frozenElapsedBeats = currentBeat();   // never freeze mid-count-in
   state.running = false;
 
   if (state.detectId) { clearInterval(state.detectId as ReturnType<typeof setInterval>); state.detectId = 0; }
@@ -959,8 +981,10 @@ async function resume(): Promise<void> {
   try { await state.ctx.resume(); } catch { /* */ }
 
   const spb = 60 / state.bpm;
-  // Count-in rewinds the playhead N beats before where we paused and replays
-  // into it, so you hear the pulse before having to come in.
+  // Count-in holds the playhead where it was paused and clicks off N beats
+  // before letting the clock through — it counts you in on the spot rather
+  // than replaying music you already played.
+  state.runStartBeat = state.frozenElapsedBeats;
   const from = state.frozenElapsedBeats - state.countInBeats;
   state.startTime = state.ctx.currentTime - from * spb;
   state.viewOffsetBeats = 0;
@@ -1019,7 +1043,7 @@ async function redo(): Promise<void> {
 async function teardown(): Promise<void> {
   if (!state.running && !state.ctx) return;
   if (state.ctx) {
-    state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
+    state.frozenElapsedBeats = currentBeat();
   }
   state.running = false;
 
@@ -1064,7 +1088,9 @@ function detectStep(): void {
     updateTuner(f);
     return;
   }
-  histPush(state.ctx.currentTime, f, rms);
+  // During a count-in the clock is parked, so anything captured now would pile
+  // up on a single beat — tick the metronome but don't record the trail.
+  if (countInLeft() <= 0) histPush(state.ctx.currentTime, f, rms);
   scheduleMetronome();
 }
 
@@ -1091,7 +1117,7 @@ function drawOnce(): void {
 
   const secsPerBeat = 60 / state.bpm;
   const elapsedBeats = state.running && state.ctx
-    ? (state.ctx.currentTime - state.startTime) / secsPerBeat
+    ? currentBeat()                                       // parked during a count-in
     : state.frozenElapsedBeats + state.viewOffsetBeats;
 
   // Pitch range + reference lanes. Score mode derives its lanes (every
@@ -1362,6 +1388,27 @@ function drawOnce(): void {
   ctx2d.stroke();
   ctx2d.restore();
 
+  // Count-in: big 4·3·2·1 on the playhead, so you can take your eyes off the
+  // toolbar and still know when to come in.
+  const left = countInLeft();
+  if (left > 0) {
+    const n = Math.ceil(left);
+    const frac = n - left;                    // 0 → 1 across the current beat
+    ctx2d.save();
+    ctx2d.textAlign = 'center';
+    ctx2d.textBaseline = 'middle';
+    const midY = (topY + bottomY) / 2;
+    // Each number fades and shrinks slightly as its beat runs out.
+    ctx2d.globalAlpha = 0.25 + 0.75 * (1 - frac);
+    const size = Math.round((64 - 8 * frac) * scale);
+    ctx2d.font = `700 ${size}px -apple-system, system-ui, sans-serif`;
+    ctx2d.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx2d.shadowBlur = 12 * scale;
+    ctx2d.fillStyle = PALETTE.playhead;
+    ctx2d.fillText(String(n), playheadX, midY);
+    ctx2d.restore();
+  }
+
   // Mic failure: say it loudly where the user is actually looking.
   if (state.micError && !state.running) {
     ctx2d.save();
@@ -1604,7 +1651,7 @@ function selectMode(tab: TabMode): void {
   if (tab === 'tuner') {
     if (state.viewMode !== 'tuner') {
       if (state.running && state.ctx) {
-        state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / spb;
+        state.frozenElapsedBeats = currentBeat();
       }
       state.viewMode = 'tuner';
       if (!state.running && !state.ctx) {
