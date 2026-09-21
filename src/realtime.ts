@@ -8,6 +8,7 @@ import { Drone, type DroneMode } from './drone';
 import { analyze, analyzeRhythm, type CentsEntry, type Report } from './report';
 import { parseMusicXml } from './musicxml';
 import { scoresAll, scoresPut, scoresDelete, type ScoreEntry } from './library';
+import { readMxl } from './mxl';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -222,7 +223,6 @@ const state = {
     temperamentRow: HTMLElement;
     rangeRow: HTMLElement;
     scoreControls: HTMLElement;
-    fileInput: HTMLInputElement;
     dirInput: HTMLInputElement;
     scoreBtn: HTMLButtonElement;
     scoreName: HTMLElement;
@@ -600,11 +600,12 @@ async function applyDrone(): Promise<void> {
 // Scores are imported a folder at a time and kept in IndexedDB, so the picker
 // in the toolbar is the only thing the user touches when switching pieces.
 const LEGACY_SCORE_KEY = 'pavlov-cat:score:v1';   // pre-library single score
-const SCORE_EXT = /\.(musicxml|xml)$/i;
+const SCORE_EXT = /\.(musicxml|xml|mxl)$/i;
 
-// Path relative to the picked folder (falls back to the bare name for a
-// single-file import). Doubles as the library key, so re-importing the same
-// folder updates entries in place instead of duplicating them.
+// Path relative to the picked folder. Doubles as the library key, so
+// re-importing the same folder updates entries in place instead of piling up
+// duplicates. (The bare name is only a fallback — a directory pick always
+// carries webkitRelativePath.)
 function scoreIdOf(file: File): string {
   const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
   return rel && rel.length ? rel : file.name;
@@ -699,7 +700,7 @@ function refreshScoreUi(): void {
 
   state.els.scoreTree.innerHTML = state.library.length
     ? renderDir(treeRoots(buildTree(state.library)), 0)
-    : '<p class="tree-empty">还没有乐谱。点上面「📁 文件夹」,选一个装 .musicxml 的文件夹,整个文件夹连同子目录一次导入。</p>';
+    : '<p class="tree-empty">还没有乐谱。点上面「📁 导入文件夹」,选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子目录一次全部导入。</p>';
 }
 
 function toggleScorePanel(show?: boolean): void {
@@ -738,15 +739,17 @@ function selectScore(id: string | null, { rewind = true } = {}): void {
   drawOnce();
 }
 
+// .mxl is a zip around the same XML, so unwrap it before parsing.
+async function scoreTextOf(file: File): Promise<string> {
+  return /\.mxl$/i.test(file.name) ? readMxl(await file.arrayBuffer()) : file.text();
+}
+
 // Parse a batch of files into library entries, reporting what didn't make it.
 // One bad file in a folder of fifty must not sink the import.
 async function importScoreFiles(files: readonly File[]): Promise<void> {
   const candidates = files.filter(f => SCORE_EXT.test(f.name));
-  const mxlCount = files.filter(f => /\.mxl$/i.test(f.name)).length;
   if (!candidates.length) {
-    setStatus(mxlCount
-      ? `没找到可用乐谱:${mxlCount} 个 .mxl 是压缩谱,请在打谱软件里导出「未压缩的 MusicXML(.musicxml)」`
-      : '这个文件夹里没有 .musicxml / .xml 乐谱');
+    setStatus('这个文件夹里没有乐谱(.musicxml / .xml / .mxl)');
     return;
   }
 
@@ -755,8 +758,7 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
   const failed: string[] = [];
   for (const file of candidates) {
     try {
-      const text = await file.text();
-      const track = parseMusicXml(text, file.name.replace(/\.[^.]+$/, ''));
+      const track = parseMusicXml(await scoreTextOf(file), file.name.replace(/\.[^.]+$/, ''));
       entries.push({ id: scoreIdOf(file), title: track.title, track, addedAt: Date.now() });
     } catch {
       failed.push(file.name);
@@ -781,7 +783,6 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
 
   const parts = [`已导入 ${entries.length} 首`];
   if (failed.length) parts.push(`${failed.length} 首解析失败`);
-  if (mxlCount) parts.push(`跳过 ${mxlCount} 个 .mxl 压缩谱`);
   setStatus(`${parts.join(',')} · 曲库共 ${state.library.length} 首`);
 }
 
@@ -1618,7 +1619,6 @@ export function initRealtime(): void {
     temperamentRow: document.getElementById('rt-temperament-row') as HTMLElement,
     rangeRow: document.getElementById('rt-range-row') as HTMLElement,
     scoreControls: document.getElementById('rt-score-controls') as HTMLElement,
-    fileInput: document.getElementById('rt-file') as HTMLInputElement,
     dirInput: document.getElementById('rt-dir') as HTMLInputElement,
     scoreBtn: document.getElementById('rt-score-btn') as HTMLButtonElement,
     scoreName: document.getElementById('rt-score-name') as HTMLElement,
@@ -1705,15 +1705,13 @@ export function initRealtime(): void {
     toggleScorePanel(false);
   });
 
-  // Both inputs feed the same batch importer; the folder one just arrives with
-  // more files. Clearing .value lets the same folder be re-picked to re-sync.
-  const onScoreFiles = (input: HTMLInputElement) => () => {
+  // Clearing .value lets the same folder be re-picked to pull in new scores.
+  state.els.dirInput.addEventListener('change', () => {
+    const input = state.els!.dirInput;
     const files = Array.from(input.files ?? []);
     input.value = '';
     if (files.length) void importScoreFiles(files);
-  };
-  state.els.fileInput.addEventListener('change', onScoreFiles(state.els.fileInput));
-  state.els.dirInput.addEventListener('change', onScoreFiles(state.els.dirInput));
+  });
 
   state.els.scoreBtn.addEventListener('click', (e) => {
     e.stopPropagation();

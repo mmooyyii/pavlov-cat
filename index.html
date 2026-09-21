@@ -60,14 +60,9 @@
             <div id="rt-score-panel" class="settings-panel score-panel hidden">
               <div class="score-panel-head">
                 <div class="sp-title">曲库</div>
-                <span class="sp-inline">
-                  <label class="rt-mini-btn" title="选一个装乐谱的文件夹,里面的 MusicXML 连同子文件夹一次性全部导入">📁 文件夹
-                    <input type="file" id="rt-dir" webkitdirectory multiple hidden />
-                  </label>
-                  <label class="rt-mini-btn" title="导入单个/多个乐谱文件">📄 文件
-                    <input type="file" id="rt-file" accept=".musicxml,.xml,.mxl" multiple hidden />
-                  </label>
-                </span>
+                <label class="rt-mini-btn" title="选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子文件夹一次性全部导入">📁 导入文件夹
+                  <input type="file" id="rt-dir" webkitdirectory multiple hidden />
+                </label>
               </div>
               <div id="rt-score-tree" class="score-tree"></div>
             </div>
