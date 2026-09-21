@@ -934,8 +934,8 @@ async function pause(): Promise<void> {
   pauseRecording();
   try { await state.ctx.suspend(); } catch { /* */ }
 
-  // A paused take isn't filed yet — say how to get it, or it looks lost.
-  setStatus(wasRecording ? '已暂停 · 录音也停住了,关掉「录音」开关就保存这一段' : '已暂停');
+  // The take is paused, not lost — 继续 resumes into the same file, 重来 files it.
+  setStatus(wasRecording ? '已暂停 · 录音跟着停住了,点「↺ 重来」就保存这一段' : '已暂停');
   updatePitchReadout(-1);
   updateStartBtn();
   drawOnce();
@@ -969,7 +969,12 @@ async function resume(): Promise<void> {
 
 // Wipe the pitch trail and rewind the timeline to beat 0. Keeps the session
 // alive (mic/ctx untouched) so it works while running, paused, or idle.
+//
+// 重来 also closes the current take: a recording belongs to one run-through,
+// so ending the run files it. rec.onstop then opens the next take by itself
+// when the switch is still armed.
 function clearData(): void {
+  if (state.recording) { try { state.recorder?.stop(); } catch { /* */ } }
   histClear();
   state.frozenElapsedBeats = 0;
   state.viewOffsetBeats = 0;
@@ -2105,21 +2110,26 @@ function beginRecording(): void {
   rec.onstop = () => {
     state.recording = false;              // armed state is left alone
     recTick();
-    if (!state.recChunks.length) return;
-    const type = rec.mimeType || 'audio/webm';
-    const blob = new Blob(state.recChunks, { type });
+    const chunks = state.recChunks;
     state.recChunks = [];
-    const take: Take = {
-      id: `take-${Date.now()}`,
-      url: URL.createObjectURL(blob),
-      blob,
-      ext: type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm',
-      at: new Date(),
-      seconds: Math.max(0, state.recElapsed),
-    };
-    state.takes.unshift(take);       // newest on top
-    refreshTakes();
-    setStatus(`录好了 ${fmtDuration(take.seconds)},在下面可以直接播放`);
+    if (chunks.length) {
+      const type = rec.mimeType || 'audio/webm';
+      const blob = new Blob(chunks, { type });
+      const take: Take = {
+        id: `take-${Date.now()}`,
+        url: URL.createObjectURL(blob),
+        blob,
+        ext: type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm',
+        at: new Date(),
+        seconds: Math.max(0, state.recElapsed),
+      };
+      state.takes.unshift(take);       // newest on top
+      refreshTakes();
+      setStatus(`录好了 ${fmtDuration(take.seconds)},在下面可以直接播放`);
+    }
+    // 重来 ends a run, not the recording session: if the switch is still on
+    // and the mic is live, roll straight into the next take.
+    if (state.recordArmed && state.running && state.micStream) beginRecording();
   };
   rec.start();
   state.recElapsed = 0;
