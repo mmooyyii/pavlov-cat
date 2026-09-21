@@ -9,6 +9,12 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* Tell the UA the page handles both appearances. Without this, everything
+     the browser draws itself — scrollbars, the <audio> player, form controls —
+     stays light on a dark page (a white scrollbar gutter down the right edge).
+     The variables below still do the theming; this only covers UA widgets. */
+  color-scheme: light dark;
+
   --bg:            #f5f5f7;
   --surface:       #ffffff;
   --surface-inset: rgba(120, 120, 128, 0.08);
