@@ -39,7 +39,7 @@ interface RefNote {
   target: boolean;     // true = a note the player should aim for / be judged against
 }
 
-type RefMode = 'chromatic' | 'scale' | 'score';
+type RefMode = 'scale' | 'score';
 
 // One bar of metronome runway before the first score note reaches the playhead.
 const SCORE_LEADIN_BEATS = 4;
@@ -49,24 +49,17 @@ function currentKey(): Key {
   return { tonicPc: k.tonicPc, mode: k.mode, temperament: state.temperament, a4: A4_HZ };
 }
 
-// Reference lanes for the current range and mode. In chromatic mode every
-// semitone is a target. In scale mode only the key's scale tones are targets
-// (drawn bright + labelled and judged against, with the chosen temperament);
-// the rest become faint guide lines.
+// Reference lanes for the current range. Only the key's scale tones are
+// targets (drawn bright + labelled and judged against, with the chosen
+// temperament); the rest become faint guide lines.
 function buildRefNotes(): RefNote[] {
-  let lo = Math.min(state.loMidi, state.hiMidi);
-  let hi = Math.max(state.loMidi, state.hiMidi);
+  const lo = Math.min(state.loMidi, state.hiMidi);
+  const hi = Math.max(state.loMidi, state.hiMidi);
+  const key = currentKey();
   const out: RefNote[] = [];
-  if (state.refMode === 'chromatic') {
-    for (let m = lo; m <= hi; m++) {
-      out.push({ midi: m, name: midiToNoteName(m), frequency: midiToFreq(m), target: true });
-    }
-  } else {
-    const key = currentKey();
-    for (let m = lo; m <= hi; m++) {
-      const t = isInScale(m, key);
-      out.push({ midi: m, name: midiToNoteName(m), frequency: t ? targetFreq(m, key) : midiToFreq(m), target: t });
-    }
+  for (let m = lo; m <= hi; m++) {
+    const t = isInScale(m, key);
+    out.push({ midi: m, name: midiToNoteName(m), frequency: t ? targetFreq(m, key) : midiToFreq(m), target: t });
   }
   return out;
 }
@@ -154,8 +147,8 @@ const state = {
   soundKind: 'tom' as SoundKind,
   noiseBuffer: null as AudioBuffer | null,    // shared white-noise source for hihat
 
-  // Reference mode: chromatic lanes vs a chosen scale/key vs an imported score
-  refMode: 'chromatic' as RefMode,
+  // Reference mode: a chosen scale/key vs an imported score
+  refMode: 'scale' as RefMode,
   keyIndex: 0,                          // index into COMMON_KEYS
   temperament: 'equal' as Temperament,
   track: null as TargetTrack | null,    // active score (mirror of the selected library entry)
@@ -295,7 +288,8 @@ function loadSettings(): void {
   if (typeof data.droneMode === 'string' && DRONE_MODES.includes(data.droneMode as DroneMode)) state.droneMode = data.droneMode as DroneMode;
   if ('droneRootMidi' in data) state.droneRootMidi = clampInt(data.droneRootMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.droneRootMidi);
   if (typeof data.micDeviceId === 'string') state.micDeviceId = data.micDeviceId;
-  if (data.refMode === 'chromatic' || data.refMode === 'scale' || data.refMode === 'score') state.refMode = data.refMode;
+  // 'chromatic' was a third mode, removed — stale settings fall back to scale.
+  if (data.refMode === 'scale' || data.refMode === 'score') state.refMode = data.refMode;
   if ('keyIndex' in data) state.keyIndex = clampInt(data.keyIndex, 0, COMMON_KEYS.length - 1, 0);
   if (data.temperament === 'equal' || data.temperament === 'just') state.temperament = data.temperament;
   if (typeof data.micLatency === 'number' && data.micLatency >= 0 && data.micLatency <= 0.5) state.micLatency = data.micLatency;
@@ -1025,8 +1019,8 @@ function drawOnce(): void {
     ? (state.ctx.currentTime - state.startTime) / secsPerBeat
     : state.frozenElapsedBeats + state.viewOffsetBeats;
 
-  // Pitch range + reference lanes. Score mode derives a chromatic lane set from
-  // the loaded score's note range; otherwise use the chromatic/scale preset.
+  // Pitch range + reference lanes. Score mode derives its lanes (every
+  // semitone) from the loaded score's note range; otherwise use the key preset.
   const scoreMode = scoreModeActive();
   let refNotes = state.rangeNotes;
   if (scoreMode) {
@@ -1208,8 +1202,8 @@ function drawOnce(): void {
     { color: PALETTE.traceBad,   path: new Path2D() },
     { color: PALETTE.traceNoRef, path: new Path2D() },
   ];
-  // Judge only against target notes (all notes in chromatic mode; scale tones
-  // in scale mode) so trace colour reflects the scale the player is practising.
+  // Judge only against target notes (the key's scale tones) so trace colour
+  // reflects the scale the player is practising.
   const refFreqs: number[] = [];
   for (const n of refNotes) if (n.target) refFreqs.push(n.frequency);
   const hasRef = refFreqs.length > 0;
@@ -1509,8 +1503,8 @@ function updateTuner(freq: number): void {
 type TabMode = RefMode | 'tuner';
 
 // Sync every mode-dependent piece of UI: active tab, visible view, and the
-// contextual controls (调 in scale mode, 导入乐谱 in score mode, 音准标准 only
-// for scales, 音域 hidden for scores where the range comes from the music).
+// contextual controls (调 + 音准标准 in scale mode, 曲目 in score mode, 音域
+// hidden for scores where the range comes from the music).
 function updateModeUi(): void {
   if (!state.els) return;
   const tab: TabMode = state.viewMode === 'tuner' ? 'tuner' : state.refMode;
@@ -1676,7 +1670,7 @@ export function initRealtime(): void {
   state.els.rangeLoSelect.addEventListener('change', onRangeChange);
   state.els.rangeHiSelect.addEventListener('change', onRangeChange);
 
-  // Reference mode (chromatic vs scale), key, and temperament.
+  // Key + temperament for scale mode.
   state.els.keySelect.innerHTML = COMMON_KEYS
     .map((k, i) => `<option value="${i}">${k.label}</option>`).join('');
   state.els.keySelect.value = String(state.keyIndex);
