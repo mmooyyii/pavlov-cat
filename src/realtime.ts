@@ -41,6 +41,17 @@ interface RefNote {
 
 type RefMode = 'scale' | 'score';
 
+// One recorded take, held in memory for the session (blobs are megabytes — too
+// big to keep in storage, and a practice take is usually listened to once).
+interface Take {
+  id: string;
+  url: string;        // object URL for the <audio> element
+  blob: Blob;
+  ext: string;
+  at: Date;           // when it was recorded
+  seconds: number;
+}
+
 // One bar of metronome runway before the first score note reaches the playhead.
 const SCORE_LEADIN_BEATS = 4;
 
@@ -166,10 +177,13 @@ const state = {
   micDeviceId: null as string | null,
   micError: null as string | null,      // shown centered on the stage when set
 
-  // Audio recording (download a take to keep / send to a teacher)
+  // Audio recording. Takes stay on the page so you can listen back right away;
+  // downloading is a deliberate second step (⬇ on the take).
   recorder: null as MediaRecorder | null,
   recChunks: [] as Blob[],
   recording: false,
+  recStartedAt: 0,                      // performance.now() at rec.start()
+  takes: [] as Take[],                  // this session's recordings, newest first
 
   // Mic latency (s) between a note sounding and being detected — for rhythm.
   micLatency: 0,
@@ -225,6 +239,7 @@ const state = {
     settingsBtn: HTMLButtonElement;
     settingsPanel: HTMLElement;
     metronomeToggles: NodeListOf<HTMLButtonElement>;
+    recordToggles: NodeListOf<HTMLButtonElement>;
     judgeToggles: NodeListOf<HTMLButtonElement>;
     unitToggles: NodeListOf<HTMLButtonElement>;
     droneToggles: NodeListOf<HTMLButtonElement>;
@@ -233,12 +248,12 @@ const state = {
     startBtn: HTMLButtonElement;
     clearBtn: HTMLButtonElement;
     exportBtn: HTMLButtonElement;
-    recordBtn: HTMLButtonElement;
     calibrateBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
     pitchEl: HTMLElement;
     reportEl: HTMLElement;
+    takesEl: HTMLElement;
     modeTabs: NodeListOf<HTMLButtonElement>;
     practiceView: HTMLElement;
     tunerView: HTMLElement;
@@ -1628,6 +1643,7 @@ export function initRealtime(): void {
     settingsBtn: document.getElementById('rt-settings-btn') as HTMLButtonElement,
     settingsPanel: document.getElementById('rt-settings-panel') as HTMLElement,
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
+    recordToggles: document.querySelectorAll<HTMLButtonElement>('#rt-record-toggles .toggle'),
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
     droneToggles: document.querySelectorAll<HTMLButtonElement>('#rt-drone-toggles .toggle'),
@@ -1636,12 +1652,12 @@ export function initRealtime(): void {
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     clearBtn: document.getElementById('rt-clear') as HTMLButtonElement,
     exportBtn: document.getElementById('rt-export') as HTMLButtonElement,
-    recordBtn: document.getElementById('rt-record') as HTMLButtonElement,
     calibrateBtn: document.getElementById('rt-calibrate') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
     pitchEl: document.getElementById('rt-pitch') as HTMLElement,
     reportEl: document.getElementById('rt-report') as HTMLElement,
+    takesEl: document.getElementById('rt-takes') as HTMLElement,
     modeTabs: document.querySelectorAll<HTMLButtonElement>('#mode-tabs .mode-tab'),
     practiceView: document.getElementById('practice-view') as HTMLElement,
     tunerView: document.getElementById('tuner-view') as HTMLElement,
@@ -1890,7 +1906,30 @@ export function initRealtime(): void {
   state.els.startBtn.addEventListener('click', togglePlayPause);
   state.els.clearBtn.addEventListener('click', clearData);
   state.els.exportBtn.addEventListener('click', exportPng);
-  state.els.recordBtn.addEventListener('click', () => { void toggleRecord(); });
+  state.els.recordToggles.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const on = btn.dataset.value === 'on';
+      if (on === state.recording) return;          // already in that state
+      // Reflect the intent immediately; toggleRecord() corrects it if the
+      // recorder refuses to start.
+      state.els!.recordToggles.forEach(b => b.classList.toggle('active', b === btn));
+      void toggleRecord();
+    });
+  });
+
+  // Takes list: download / delete one, or clear them all.
+  state.els.takesEl.addEventListener('click', (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest('[data-clear-takes]')) { clearTakes(); return; }
+    const dl = t.closest<HTMLElement>('[data-dl]')?.dataset.dl;
+    if (dl) {
+      const take = state.takes.find(x => x.id === dl);
+      if (take) downloadBlob(take.blob, takeFilename(take));
+      return;
+    }
+    const del = t.closest<HTMLElement>('[data-del]')?.dataset.del;
+    if (del) dropTake(del);
+  });
   state.els.calibrateBtn.addEventListener('click', () => { void calibrateLatency(); });
   state.els.tunerStartBtn.addEventListener('click', togglePlayPause);
 
@@ -1976,10 +2015,11 @@ function setupPan(canvas: HTMLCanvasElement): void {
 }
 
 // ── Export & recording ───────────────────────────────────────────────────────
-function timestamp(): string {
-  const d = new Date();
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+function pad2(n: number): string { return String(n).padStart(2, '0'); }
+
+function timestamp(d: Date = new Date()): string {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`
+    + `-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 }
 
 function downloadBlob(blob: Blob, filename: string): void {
@@ -2005,8 +2045,12 @@ function pickRecMime(): string {
   return '';
 }
 
+// The toolbar switch is the single source of truth for recording state — it
+// also has to snap back to 关 when a take stops for any other reason (mic
+// lost, session stopped, MediaRecorder refused to start).
 function updateRecordBtn(): void {
-  if (state.els) state.els.recordBtn.textContent = state.recording ? '⏹ 停止录音' : '🎙 录音';
+  const want = state.recording ? 'on' : 'off';
+  state.els?.recordToggles.forEach(b => b.classList.toggle('active', b.dataset.value === want));
 }
 
 // Record the raw microphone (just the playing, not metronome/drone) to a file.
@@ -2016,7 +2060,7 @@ async function toggleRecord(): Promise<void> {
     return;
   }
   if (!state.running) await start();      // recording needs a live mic
-  if (!state.micStream) { setStatus('无法录音:麦克风未就绪'); return; }
+  if (!state.micStream) { setStatus('无法录音:麦克风未就绪'); updateRecordBtn(); return; }
 
   const mime = pickRecMime();
   let rec: MediaRecorder;
@@ -2024,6 +2068,7 @@ async function toggleRecord(): Promise<void> {
     rec = new MediaRecorder(state.micStream, mime ? { mimeType: mime } : undefined);
   } catch {
     setStatus('当前浏览器不支持录音');
+    updateRecordBtn();                    // snap the switch back to 关
     return;
   }
   state.recorder = rec;
@@ -2034,14 +2079,70 @@ async function toggleRecord(): Promise<void> {
     updateRecordBtn();
     if (!state.recChunks.length) return;
     const type = rec.mimeType || 'audio/webm';
-    const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
-    downloadBlob(new Blob(state.recChunks, { type }), `pavlov-cat-${timestamp()}.${ext}`);
+    const blob = new Blob(state.recChunks, { type });
     state.recChunks = [];
+    const take: Take = {
+      id: `take-${Date.now()}`,
+      url: URL.createObjectURL(blob),
+      blob,
+      ext: type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm',
+      at: new Date(),
+      seconds: Math.max(0, (performance.now() - state.recStartedAt) / 1000),
+    };
+    state.takes.unshift(take);       // newest on top
+    refreshTakes();
+    setStatus(`录好了 ${fmtDuration(take.seconds)},在下面可以直接播放`);
   };
   rec.start();
+  state.recStartedAt = performance.now();
   state.recording = true;
   updateRecordBtn();
   setStatus('录音中…');
+}
+
+// ── Recorded takes list ──────────────────────────────────────────────────────
+function fmtDuration(sec: number): string {
+  const s = Math.round(sec);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function takeFilename(take: Take): string {
+  return `pavlov-cat-${timestamp(take.at)}.${take.ext}`;
+}
+
+function refreshTakes(): void {
+  const el = state.els?.takesEl;
+  if (!el) return;
+  el.classList.toggle('hidden', !state.takes.length);
+  if (!state.takes.length) { el.innerHTML = ''; return; }
+
+  el.innerHTML =
+    `<div class="takes-head"><span class="sp-title">本次录音</span>` +
+    `<button class="rt-mini-btn" type="button" data-clear-takes>清空</button></div>` +
+    state.takes.map(t => {
+      // Duration is already in the player's own readout — show only the clock.
+      const time = `${pad2(t.at.getHours())}:${pad2(t.at.getMinutes())}`;
+      return `<div class="take" data-take="${t.id}">` +
+        `<audio class="take-audio" controls preload="metadata" src="${t.url}"></audio>` +
+        `<span class="take-meta">${time}</span>` +
+        `<button class="take-btn" type="button" data-dl="${t.id}" title="下载这段录音" aria-label="下载">⬇</button>` +
+        `<button class="take-btn" type="button" data-del="${t.id}" title="删掉这段录音" aria-label="删除">✕</button>` +
+      `</div>`;
+    }).join('');
+}
+
+function dropTake(id: string): void {
+  const i = state.takes.findIndex(t => t.id === id);
+  if (i < 0) return;
+  URL.revokeObjectURL(state.takes[i].url);
+  state.takes.splice(i, 1);
+  refreshTakes();
+}
+
+function clearTakes(): void {
+  for (const t of state.takes) URL.revokeObjectURL(t.url);
+  state.takes = [];
+  refreshTakes();
 }
 
 // Measure mic latency by clicking through the speakers and finding when each
