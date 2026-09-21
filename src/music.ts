@@ -47,21 +47,61 @@ export interface Key {
   a4: number;
 }
 
-// Beginner-friendly key list. Violin-friendly keys (open-string sympathetic
-// resonance) come first so a newcomer picks a comfortable one by default.
-export const COMMON_KEYS: { label: string; tonicPc: number; mode: Mode }[] = [
-  { label: 'D 大调', tonicPc: 2, mode: 'major' },
-  { label: 'A 大调', tonicPc: 9, mode: 'major' },
-  { label: 'G 大调', tonicPc: 7, mode: 'major' },
-  { label: 'C 大调', tonicPc: 0, mode: 'major' },
-  { label: 'F 大调', tonicPc: 5, mode: 'major' },
-  { label: 'B♭ 大调', tonicPc: 10, mode: 'major' },
-  { label: 'E 大调', tonicPc: 4, mode: 'major' },
-  { label: 'A 小调', tonicPc: 9, mode: 'minor' },
-  { label: 'E 小调', tonicPc: 4, mode: 'minor' },
-  { label: 'D 小调', tonicPc: 2, mode: 'minor' },
-  { label: 'G 小调', tonicPc: 7, mode: 'minor' },
-  { label: 'B 小调', tonicPc: 11, mode: 'minor' },
+// All 24 keys. Ordered by tonic pitch (not the circle of fifths) because this
+// list is for *finding* a key you already have in mind — by-pitch is the order
+// anyone can scan. Enharmonic tonics get their conventional spelling (D♭ not
+// C♯ for the major, C♯ not D♭ for the minor). `sharps` is the key signature:
+// positive = that many sharps, negative = that many flats.
+export const COMMON_KEYS: { label: string; tonicPc: number; mode: Mode; sharps: number }[] = [
+  { label: 'C 大调',  tonicPc: 0,  mode: 'major', sharps: 0 },
+  { label: 'D♭ 大调', tonicPc: 1,  mode: 'major', sharps: -5 },
+  { label: 'D 大调',  tonicPc: 2,  mode: 'major', sharps: 2 },
+  { label: 'E♭ 大调', tonicPc: 3,  mode: 'major', sharps: -3 },
+  { label: 'E 大调',  tonicPc: 4,  mode: 'major', sharps: 4 },
+  { label: 'F 大调',  tonicPc: 5,  mode: 'major', sharps: -1 },
+  { label: 'F♯ 大调', tonicPc: 6,  mode: 'major', sharps: 6 },
+  { label: 'G 大调',  tonicPc: 7,  mode: 'major', sharps: 1 },
+  { label: 'A♭ 大调', tonicPc: 8,  mode: 'major', sharps: -4 },
+  { label: 'A 大调',  tonicPc: 9,  mode: 'major', sharps: 3 },
+  { label: 'B♭ 大调', tonicPc: 10, mode: 'major', sharps: -2 },
+  { label: 'B 大调',  tonicPc: 11, mode: 'major', sharps: 5 },
+  { label: 'C 小调',  tonicPc: 0,  mode: 'minor', sharps: -3 },
+  { label: 'C♯ 小调', tonicPc: 1,  mode: 'minor', sharps: 4 },
+  { label: 'D 小调',  tonicPc: 2,  mode: 'minor', sharps: -1 },
+  { label: 'E♭ 小调', tonicPc: 3,  mode: 'minor', sharps: -6 },
+  { label: 'E 小调',  tonicPc: 4,  mode: 'minor', sharps: 1 },
+  { label: 'F 小调',  tonicPc: 5,  mode: 'minor', sharps: -4 },
+  { label: 'F♯ 小调', tonicPc: 6,  mode: 'minor', sharps: 3 },
+  { label: 'G 小调',  tonicPc: 7,  mode: 'minor', sharps: -2 },
+  { label: 'G♯ 小调', tonicPc: 8,  mode: 'minor', sharps: 5 },
+  { label: 'A 小调',  tonicPc: 9,  mode: 'minor', sharps: 0 },
+  { label: 'B♭ 小调', tonicPc: 10, mode: 'minor', sharps: -5 },
+  { label: 'B 小调',  tonicPc: 11, mode: 'minor', sharps: 2 },
+];
+
+// Sharps and flats always appear in these fixed orders, so the signature can
+// be spelled out from the count alone.
+const SHARP_ORDER = ['F', 'C', 'G', 'D', 'A', 'E', 'B'] as const;
+const FLAT_ORDER = ['B', 'E', 'A', 'D', 'G', 'C', 'F'] as const;
+
+/** Which notes carry an accidental in this key, e.g. "F♯ C♯" for D major. */
+export function keySignatureText(sharps: number): string {
+  if (sharps > 0) return SHARP_ORDER.slice(0, sharps).map(n => `${n}♯`).join(' ');
+  if (sharps < 0) return FLAT_ORDER.slice(0, -sharps).map(n => `${n}♭`).join(' ');
+  return '无升降号';
+}
+
+// D major: open-string resonance makes it the friendliest starting key on a
+// violin, so it stays the default even though C major heads the list.
+export const DEFAULT_KEY_INDEX =
+  COMMON_KEYS.findIndex(k => k.tonicPc === 2 && k.mode === 'major');
+
+// The pre-expansion 12-key list, in its original order. Settings used to store
+// a bare index into it; without this table an upgrade would silently move the
+// user to a different key.
+export const LEGACY_KEY_ORDER: readonly (readonly [number, Mode])[] = [
+  [2, 'major'], [9, 'major'], [7, 'major'], [0, 'major'], [5, 'major'], [10, 'major'],
+  [4, 'major'], [9, 'minor'], [4, 'minor'], [2, 'minor'], [7, 'minor'], [11, 'minor'],
 ];
 
 export function scaleSteps(mode: Mode): readonly number[] {

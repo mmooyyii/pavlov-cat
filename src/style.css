@@ -329,6 +329,11 @@ input[type='number']:focus {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/* Key names carry their signature ("F♯ 大调 · F♯ C♯ G♯ D♯ A♯ E♯"), and a select
+   sizes itself to its longest option — cap it so the toolbar can't be shoved
+   off-screen by the six-accidental keys. */
+#rt-key { max-width: 210px; }
+
 .rt-range-sep {
   color: var(--tertiary);
   font-weight: 500;

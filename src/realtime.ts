@@ -1,7 +1,8 @@
 import { detectPitch } from './pitch';
 import {
   A4_HZ, freqToMidi, midiToFreq, midiToNoteName,
-  COMMON_KEYS, isInScale, targetFreq, type Key, type Temperament,
+  COMMON_KEYS, DEFAULT_KEY_INDEX, LEGACY_KEY_ORDER, keySignatureText,
+  isInScale, targetFreq, type Key, type Mode, type Temperament,
   type TargetNote, type TargetTrack,
 } from './music';
 import { Drone, type DroneMode } from './drone';
@@ -160,7 +161,7 @@ const state = {
 
   // Reference mode: a chosen scale/key vs an imported score
   refMode: 'scale' as RefMode,
-  keyIndex: 0,                          // index into COMMON_KEYS
+  keyIndex: DEFAULT_KEY_INDEX,          // index into COMMON_KEYS
   temperament: 'equal' as Temperament,
   track: null as TargetTrack | null,    // active score (mirror of the selected library entry)
   library: [] as ScoreEntry[],          // imported scores, sorted by title
@@ -181,8 +182,10 @@ const state = {
   // downloading is a deliberate second step (⬇ on the take).
   recorder: null as MediaRecorder | null,
   recChunks: [] as Blob[],
-  recording: false,
-  recStartedAt: 0,                      // performance.now() at rec.start()
+  recording: false,                     // capture actually running right now
+  recordArmed: false,                   // switch is on — record whenever the mic is live
+  recStartedAt: 0,                      // performance.now() when the current segment began (0 = not running)
+  recElapsed: 0,                        // seconds captured so far, excluding paused time
   takes: [] as Take[],                  // this session's recordings, newest first
 
   // Mic latency (s) between a note sounding and being detected — for rhythm.
@@ -247,7 +250,6 @@ const state = {
     micSelect: HTMLSelectElement;
     startBtn: HTMLButtonElement;
     clearBtn: HTMLButtonElement;
-    exportBtn: HTMLButtonElement;
     calibrateBtn: HTMLButtonElement;
     fullscreenBtn: HTMLButtonElement;
     statusEl: HTMLElement;
@@ -306,7 +308,20 @@ function loadSettings(): void {
   if (typeof data.micDeviceId === 'string') state.micDeviceId = data.micDeviceId;
   // 'chromatic' was a third mode, removed — stale settings fall back to scale.
   if (data.refMode === 'scale' || data.refMode === 'score') state.refMode = data.refMode;
-  if ('keyIndex' in data) state.keyIndex = clampInt(data.keyIndex, 0, COMMON_KEYS.length - 1, 0);
+  // The key is stored by identity (tonic + mode), not by list position — the
+  // list grew from 12 to 24 keys and a bare index would silently point at a
+  // different key after the upgrade.
+  const k = data.key as { tonicPc?: unknown; mode?: unknown } | undefined;
+  const findKey = (pc: number, mode: Mode): number =>
+    COMMON_KEYS.findIndex(x => x.tonicPc === pc && x.mode === mode);
+  if (k && typeof k.tonicPc === 'number' && (k.mode === 'major' || k.mode === 'minor')) {
+    const i = findKey(k.tonicPc, k.mode);
+    if (i >= 0) state.keyIndex = i;
+  } else if ('keyIndex' in data) {
+    const legacy = LEGACY_KEY_ORDER[clampInt(data.keyIndex, 0, LEGACY_KEY_ORDER.length - 1, 0)];
+    const i = legacy ? findKey(legacy[0], legacy[1]) : -1;
+    if (i >= 0) state.keyIndex = i;
+  }
   if (data.temperament === 'equal' || data.temperament === 'just') state.temperament = data.temperament;
   if (typeof data.micLatency === 'number' && data.micLatency >= 0 && data.micLatency <= 0.5) state.micLatency = data.micLatency;
   if (typeof data.scoreId === 'string') state.scoreId = data.scoreId;
@@ -330,7 +345,10 @@ function saveSettings(): void {
       droneRootMidi: state.droneRootMidi,
       micDeviceId: state.micDeviceId,
       refMode: state.refMode,
-      keyIndex: state.keyIndex,
+      key: {
+        tonicPc: COMMON_KEYS[state.keyIndex]?.tonicPc ?? 2,
+        mode: COMMON_KEYS[state.keyIndex]?.mode ?? 'major',
+      },
       temperament: state.temperament,
       micLatency: state.micLatency,
       scoreId: state.scoreId,
@@ -592,6 +610,7 @@ async function start(): Promise<void> {
   state.running = true;
 
   state.detectId = setInterval(detectStep, DETECT_INTERVAL_MS);
+  if (state.recordArmed) beginRecording();   // switch was armed before the mic came up
   // Device labels are only exposed after permission is granted — refresh now.
   void populateMicList();
   hideReport();
@@ -911,9 +930,12 @@ async function pause(): Promise<void> {
   if (state.detectId) { clearInterval(state.detectId as ReturnType<typeof setInterval>); state.detectId = 0; }
   if (state.rafId) { cancelAnimationFrame(state.rafId); state.rafId = 0; }
 
+  const wasRecording = state.recording;
+  pauseRecording();
   try { await state.ctx.suspend(); } catch { /* */ }
 
-  setStatus('已暂停');
+  // A paused take isn't filed yet — say how to get it, or it looks lost.
+  setStatus(wasRecording ? '已暂停 · 录音也停住了,关掉「录音」开关就保存这一段' : '已暂停');
   updatePitchReadout(-1);
   updateStartBtn();
   drawOnce();
@@ -938,6 +960,7 @@ async function resume(): Promise<void> {
   state.running = true;
 
   state.detectId = setInterval(detectStep, DETECT_INTERVAL_MS);
+  resumeRecording();
   setStatus('');
   hideReport();
   updateStartBtn();
@@ -1651,7 +1674,6 @@ export function initRealtime(): void {
     micSelect: document.getElementById('rt-mic') as HTMLSelectElement,
     startBtn: document.getElementById('rt-start') as HTMLButtonElement,
     clearBtn: document.getElementById('rt-clear') as HTMLButtonElement,
-    exportBtn: document.getElementById('rt-export') as HTMLButtonElement,
     calibrateBtn: document.getElementById('rt-calibrate') as HTMLButtonElement,
     fullscreenBtn: document.getElementById('rt-fullscreen') as HTMLButtonElement,
     statusEl: document.getElementById('rt-status') as HTMLElement,
@@ -1693,9 +1715,16 @@ export function initRealtime(): void {
   state.els.rangeLoSelect.addEventListener('change', onRangeChange);
   state.els.rangeHiSelect.addEventListener('change', onRangeChange);
 
-  // Key + temperament for scale mode.
-  state.els.keySelect.innerHTML = COMMON_KEYS
-    .map((k, i) => `<option value="${i}">${k.label}</option>`).join('');
+  // Key + temperament for scale mode. Each option spells out its key signature
+  // ("D 大调 · F♯ C♯") so picking a key doesn't require knowing it by heart.
+  const keyOptions = (mode: Mode): string => COMMON_KEYS
+    .map((k, i) => ({ k, i }))
+    .filter(x => x.k.mode === mode)
+    .map(({ k, i }) => `<option value="${i}">${k.label} · ${keySignatureText(k.sharps)}</option>`)
+    .join('');
+  state.els.keySelect.innerHTML =
+    `<optgroup label="大调">${keyOptions('major')}</optgroup>` +
+    `<optgroup label="小调">${keyOptions('minor')}</optgroup>`;
   state.els.keySelect.value = String(state.keyIndex);
 
   refreshScoreUi();     // empty-state placeholder until IndexedDB answers
@@ -1905,15 +1934,10 @@ export function initRealtime(): void {
 
   state.els.startBtn.addEventListener('click', togglePlayPause);
   state.els.clearBtn.addEventListener('click', clearData);
-  state.els.exportBtn.addEventListener('click', exportPng);
   state.els.recordToggles.forEach(btn => {
     btn.addEventListener('click', () => {
       const on = btn.dataset.value === 'on';
-      if (on === state.recording) return;          // already in that state
-      // Reflect the intent immediately; toggleRecord() corrects it if the
-      // recorder refuses to start.
-      state.els!.recordToggles.forEach(b => b.classList.toggle('active', b === btn));
-      void toggleRecord();
+      if (on !== state.recordArmed) setRecordArmed(on);
     });
   });
 
@@ -2031,36 +2055,39 @@ function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// Save the current scope (pitch trail + targets) as a PNG to show a teacher.
-function exportPng(): void {
-  if (!state.els) return;
-  state.els.canvas.toBlob(blob => {
-    if (blob) downloadBlob(blob, `pavlov-cat-${timestamp()}.png`);
-  }, 'image/png');
-}
-
 function pickRecMime(): string {
   const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
   for (const t of types) if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) return t;
   return '';
 }
 
-// The toolbar switch is the single source of truth for recording state — it
-// also has to snap back to 关 when a take stops for any other reason (mic
-// lost, session stopped, MediaRecorder refused to start).
+// The switch shows the *armed* state, not whether capture is running right
+// now: it stays on 开 across pauses, so resuming keeps recording.
 function updateRecordBtn(): void {
-  const want = state.recording ? 'on' : 'off';
+  const want = state.recordArmed ? 'on' : 'off';
   state.els?.recordToggles.forEach(b => b.classList.toggle('active', b.dataset.value === want));
 }
 
-// Record the raw microphone (just the playing, not metronome/drone) to a file.
-async function toggleRecord(): Promise<void> {
-  if (state.recording) {
-    state.recorder?.stop();
-    return;
+// The 录音 switch is armed state, not a start button: turning it on while the
+// session is stopped just means "record the next run". Actual capture begins
+// when the mic is live — here if it already is, otherwise from start().
+function setRecordArmed(on: boolean): void {
+  state.recordArmed = on;
+  updateRecordBtn();
+  if (on) {
+    if (state.running) beginRecording();
+    else setStatus('已开启录音,点「▶ 开始」就会录下这一遍');
+  } else if (state.recording) {
+    state.recorder?.stop();               // onstop files the take
+  } else {
+    setStatus('');
   }
-  if (!state.running) await start();      // recording needs a live mic
-  if (!state.micStream) { setStatus('无法录音:麦克风未就绪'); updateRecordBtn(); return; }
+}
+
+// Record the raw microphone (just the playing, not metronome/drone).
+function beginRecording(): void {
+  if (state.recording) return;
+  if (!state.micStream) { setStatus('无法录音:麦克风未就绪'); return; }
 
   const mime = pickRecMime();
   let rec: MediaRecorder;
@@ -2068,15 +2095,16 @@ async function toggleRecord(): Promise<void> {
     rec = new MediaRecorder(state.micStream, mime ? { mimeType: mime } : undefined);
   } catch {
     setStatus('当前浏览器不支持录音');
-    updateRecordBtn();                    // snap the switch back to 关
+    state.recordArmed = false;            // disarm: it will never work here
+    updateRecordBtn();
     return;
   }
   state.recorder = rec;
   state.recChunks = [];
   rec.ondataavailable = e => { if (e.data.size > 0) state.recChunks.push(e.data); };
   rec.onstop = () => {
-    state.recording = false;
-    updateRecordBtn();
+    state.recording = false;              // armed state is left alone
+    recTick();
     if (!state.recChunks.length) return;
     const type = rec.mimeType || 'audio/webm';
     const blob = new Blob(state.recChunks, { type });
@@ -2087,17 +2115,42 @@ async function toggleRecord(): Promise<void> {
       blob,
       ext: type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm',
       at: new Date(),
-      seconds: Math.max(0, (performance.now() - state.recStartedAt) / 1000),
+      seconds: Math.max(0, state.recElapsed),
     };
     state.takes.unshift(take);       // newest on top
     refreshTakes();
     setStatus(`录好了 ${fmtDuration(take.seconds)},在下面可以直接播放`);
   };
   rec.start();
+  state.recElapsed = 0;
   state.recStartedAt = performance.now();
   state.recording = true;
-  updateRecordBtn();
   setStatus('录音中…');
+}
+
+// Fold the running segment into the total and stop the clock. Paused time
+// must not count, so this runs on every pause and before filing the take.
+function recTick(): void {
+  if (state.recStartedAt > 0) {
+    state.recElapsed += (performance.now() - state.recStartedAt) / 1000;
+    state.recStartedAt = 0;
+  }
+}
+
+// Pausing practice pauses the take rather than ending it — one run through a
+// piece stays one file even if you stop to rewind.
+function pauseRecording(): void {
+  if (!state.recording || state.recorder?.state !== 'recording') return;
+  try { state.recorder.pause(); recTick(); } catch { /* */ }
+}
+
+function resumeRecording(): void {
+  if (!state.recordArmed) return;
+  if (state.recording && state.recorder?.state === 'paused') {
+    try { state.recorder.resume(); state.recStartedAt = performance.now(); } catch { /* */ }
+  } else if (!state.recording) {
+    beginRecording();                   // armed before the mic was live
+  }
 }
 
 // ── Recorded takes list ──────────────────────────────────────────────────────
