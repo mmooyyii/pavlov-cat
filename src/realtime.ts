@@ -151,7 +151,7 @@ const state = {
   bpm: 80,
   timeUnit: 'beat' as TimeUnit,
   accentEvery: 4,
-  countInBeats: 0,                      // empty beats clicked off before the run starts
+  countInBeats: 4,                      // empty beats clicked off before the run starts
   runStartBeat: 0,                      // beat this run resumes at; the clock is held here during the count-in
   metronomeOn: false,
   pitchJudge: true,                     // when off, all dots use neutral color
@@ -418,7 +418,10 @@ function scheduleMetronome(): void {
   const ctx = state.ctx;
   const secsPerBeat = 60 / state.bpm;
   while (state.nextTickTime < ctx.currentTime + LOOKAHEAD_S) {
-    if (state.metronomeOn) {
+    // Count-in beats always click, even with the metronome switched off —
+    // a silent count-in would count you in on nothing.
+    const isCountIn = state.nextTickBeat < state.runStartBeat;
+    if (state.metronomeOn || isCountIn) {
       const isAccent = state.nextTickBeat % state.accentEvery === 0;
       if (isAccent) playSnare(ctx, state.nextTickTime);
       else playSound(ctx, state.nextTickTime, state.soundKind);
