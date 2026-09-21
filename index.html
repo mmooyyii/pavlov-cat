@@ -59,9 +59,14 @@
             <div id="rt-score-panel" class="settings-panel score-panel hidden">
               <div class="score-panel-head">
                 <div class="sp-title">曲库</div>
-                <label class="rt-mini-btn" title="选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子文件夹一次性全部导入">📁 导入文件夹
-                  <input type="file" id="rt-dir" webkitdirectory multiple hidden />
-                </label>
+                <span class="sp-inline">
+                  <label class="rt-mini-btn" title="选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子文件夹一次性全部导入。安卓上若点了没反应,改用右边「选文件」多选。">📁 文件夹
+                    <input type="file" id="rt-dir" webkitdirectory multiple hidden />
+                  </label>
+                  <label class="rt-mini-btn" title="在文件选择器里多选乐谱(安卓平板上用这个)">📄 选文件
+                    <input type="file" id="rt-file" accept=".musicxml,.xml,.mxl" multiple hidden />
+                  </label>
+                </span>
               </div>
               <div id="rt-score-tree" class="score-tree"></div>
             </div>

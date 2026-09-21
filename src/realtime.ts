@@ -217,6 +217,7 @@ const state = {
     rangeRow: HTMLElement;
     scoreControls: HTMLElement;
     dirInput: HTMLInputElement;
+    fileInput: HTMLInputElement;
     scoreBtn: HTMLButtonElement;
     scoreName: HTMLElement;
     scorePanel: HTMLElement;
@@ -596,13 +597,18 @@ async function applyDrone(): Promise<void> {
 const LEGACY_SCORE_KEY = 'pavlov-cat:score:v1';   // pre-library single score
 const SCORE_EXT = /\.(musicxml|xml|mxl)$/i;
 
-// Path relative to the picked folder. Doubles as the library key, so
-// re-importing the same folder updates entries in place instead of piling up
-// duplicates. (The bare name is only a fallback — a directory pick always
-// carries webkitRelativePath.)
+// Path relative to the picked folder — the library key, so re-importing the
+// same folder updates entries in place instead of piling up duplicates. Falls
+// back to the bare name when there's no path (a multi-file pick, which is the
+// only way to import on Android builds without folder support).
+//
+// Android hands back a Storage Access Framework path like
+// "primary:Download/scores/x.musicxml"; strip the volume prefix so the tree
+// doesn't grow a bogus "primary:Download" root.
 function scoreIdOf(file: File): string {
   const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-  return rel && rel.length ? rel : file.name;
+  if (!rel) return file.name;
+  return rel.replace(/\\/g, '/').replace(/^[A-Za-z0-9_-]+:/, '').replace(/^\/+/, '') || file.name;
 }
 
 function escapeHtml(s: string): string {
@@ -1614,6 +1620,7 @@ export function initRealtime(): void {
     rangeRow: document.getElementById('rt-range-row') as HTMLElement,
     scoreControls: document.getElementById('rt-score-controls') as HTMLElement,
     dirInput: document.getElementById('rt-dir') as HTMLInputElement,
+    fileInput: document.getElementById('rt-file') as HTMLInputElement,
     scoreBtn: document.getElementById('rt-score-btn') as HTMLButtonElement,
     scoreName: document.getElementById('rt-score-name') as HTMLElement,
     scorePanel: document.getElementById('rt-score-panel') as HTMLElement,
@@ -1699,13 +1706,17 @@ export function initRealtime(): void {
     toggleScorePanel(false);
   });
 
-  // Clearing .value lets the same folder be re-picked to pull in new scores.
-  state.els.dirInput.addEventListener('change', () => {
-    const input = state.els!.dirInput;
+  // Folder pick and multi-file pick feed the same importer — Android Chrome
+  // only got folder support very recently (and silently does nothing on older
+  // builds), so the file picker has to stay as the fallback. Clearing .value
+  // lets the same folder be re-picked to pull in newly added scores.
+  const onPicked = (input: HTMLInputElement) => () => {
     const files = Array.from(input.files ?? []);
     input.value = '';
     if (files.length) void importScoreFiles(files);
-  });
+  };
+  state.els.dirInput.addEventListener('change', onPicked(state.els.dirInput));
+  state.els.fileInput.addEventListener('change', onPicked(state.els.fileInput));
 
   state.els.scoreBtn.addEventListener('click', (e) => {
     e.stopPropagation();

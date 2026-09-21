@@ -496,6 +496,23 @@ input[type='number']:focus {
 .tree-del:focus-visible { opacity: 1; }
 .tree-del:hover { background: var(--fill-strong); color: var(--label); }
 
+/* Touch devices (incl. landscape tablets, which are too wide for the phone
+   breakpoint): there is no hover, so anything hover-revealed would never
+   appear. Rows also need a finger-sized target. */
+@media (pointer: coarse) {
+  .tree-del {
+    opacity: 1;
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+    margin: -6px -4px -6px 0;   /* grow the target, keep the row's height */
+  }
+  .tree-row { padding-top: 12px; padding-bottom: 12px; }   /* ≥44px target */
+  .rt-score-btn { min-height: 34px; }
+  .rt-mini-btn { padding: 7px 14px; }
+  .tree-caret { width: 14px; font-size: 12px; }
+}
+
 /* Mic-setup help: tiny "?" toggles an inset panel */
 .rt-help-btn {
   width: 19px;
