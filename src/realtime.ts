@@ -151,6 +151,7 @@ const state = {
   bpm: 80,
   timeUnit: 'beat' as TimeUnit,
   accentEvery: 4,
+  countInBeats: 0,                      // empty beats clicked off before the run starts
   metronomeOn: false,
   pitchJudge: true,                     // when off, all dots use neutral color
   visibleBeats: DEFAULT_VISIBLE_BEATS,
@@ -221,6 +222,7 @@ const state = {
     wrap: HTMLElement;
     bpmInput: HTMLInputElement;
     accentInput: HTMLInputElement;
+    countInInput: HTMLInputElement;
     visibleBeatsInput: HTMLInputElement;
     centsGoodInput: HTMLInputElement;
     centsMedInput: HTMLInputElement;
@@ -292,6 +294,7 @@ function loadSettings(): void {
 
   if ('bpm' in data) state.bpm = clampInt(data.bpm, 40, 220, state.bpm);
   if ('accentEvery' in data) state.accentEvery = clampInt(data.accentEvery, 1, 12, state.accentEvery);
+  if ('countInBeats' in data) state.countInBeats = clampInt(data.countInBeats, 0, 8, state.countInBeats);
   if ('visibleBeats' in data) state.visibleBeats = clampInt(data.visibleBeats, MIN_VISIBLE_BEATS, MAX_VISIBLE_BEATS, state.visibleBeats);
   if ('centsToleranceGood' in data) state.centsToleranceGood = clampInt(data.centsToleranceGood, MIN_CENTS_TOLERANCE, MAX_CENTS_TOLERANCE, state.centsToleranceGood);
   if ('centsToleranceMed' in data) state.centsToleranceMed = clampInt(data.centsToleranceMed, MIN_CENTS_TOLERANCE, MAX_CENTS_TOLERANCE, state.centsToleranceMed);
@@ -332,6 +335,7 @@ function saveSettings(): void {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
       bpm: state.bpm,
       accentEvery: state.accentEvery,
+      countInBeats: state.countInBeats,
       visibleBeats: state.visibleBeats,
       centsToleranceGood: state.centsToleranceGood,
       centsToleranceMed: state.centsToleranceMed,
@@ -603,9 +607,13 @@ async function start(): Promise<void> {
 
   histClear();
 
-  state.startTime = ctx.currentTime + 0.1;
-  state.nextTickBeat = 0;
-  state.nextTickTime = state.startTime;
+  // Count-in: push beat 0 out by N beats so the run starts at negative time.
+  // The metronome starts ticking immediately at beat −N; the playhead reaches
+  // the first beat when the count-in ends.
+  const spb = 60 / state.bpm;
+  state.startTime = ctx.currentTime + 0.1 + state.countInBeats * spb;
+  state.nextTickBeat = -state.countInBeats;
+  state.nextTickTime = state.startTime + state.nextTickBeat * spb;
   state.viewOffsetBeats = 0;
   state.running = true;
 
@@ -922,7 +930,9 @@ async function switchMic(deviceId: string): Promise<void> {
 // Pause: keep mic + ctx + pitch history so resume() can continue from here.
 // Suspending the AudioContext freezes its currentTime, so on resume the
 // startTime math doesn't need to compensate for paused wall-clock.
-async function pause(): Promise<void> {
+// `summary: false` suppresses the status line and the practice report — used
+// by 重来, which pauses only as a step on its way back to the top.
+async function pause({ summary = true } = {}): Promise<void> {
   if (!state.running || !state.ctx) return;
   state.frozenElapsedBeats = (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
   state.running = false;
@@ -934,12 +944,14 @@ async function pause(): Promise<void> {
   pauseRecording();
   try { await state.ctx.suspend(); } catch { /* */ }
 
-  // The take is paused, not lost — 继续 resumes into the same file, 重来 files it.
-  setStatus(wasRecording ? '已暂停 · 录音跟着停住了,点「↺ 重来」就保存这一段' : '已暂停');
+  if (summary) {
+    // The take is paused, not lost — 继续 resumes into it, 重来 files it.
+    setStatus(wasRecording ? '已暂停 · 录音跟着停住了,点「↺ 重来」就保存这一段' : '已暂停');
+  }
   updatePitchReadout(-1);
   updateStartBtn();
   drawOnce();
-  if (state.viewMode === 'practice') showReport();
+  if (summary && state.viewMode === 'practice') showReport();
 }
 
 async function resume(): Promise<void> {
@@ -947,11 +959,14 @@ async function resume(): Promise<void> {
   try { await state.ctx.resume(); } catch { /* */ }
 
   const spb = 60 / state.bpm;
-  state.startTime = state.ctx.currentTime - state.frozenElapsedBeats * spb;
+  // Count-in rewinds the playhead N beats before where we paused and replays
+  // into it, so you hear the pulse before having to come in.
+  const from = state.frozenElapsedBeats - state.countInBeats;
+  state.startTime = state.ctx.currentTime - from * spb;
   state.viewOffsetBeats = 0;
-  // Next tick = first whole beat after where we paused, but never in the past
+  // Next tick = first whole beat after the resume point, but never in the past
   // (otherwise scheduleMetronome would burst-fire all missed beats at once).
-  const nextBeat = Math.max(0, Math.floor(state.frozenElapsedBeats) + 1);
+  const nextBeat = Math.floor(from) + 1;
   state.nextTickBeat = nextBeat;
   state.nextTickTime = state.startTime + nextBeat * spb;
   if (state.nextTickTime < state.ctx.currentTime + 0.05) {
@@ -987,6 +1002,17 @@ function clearData(): void {
   updatePitchReadout(-1);
   hideReport();
   drawOnce();
+}
+
+// 重来 — end this run: stop the clock, file the take, rewind to beat 0. It
+// pauses rather than rolling straight on, so you can get the bow back to its
+// starting position before pressing 继续.
+async function redo(): Promise<void> {
+  const hadTake = state.recording;
+  await pause({ summary: false });   // report would only describe a trail we're about to wipe
+  clearData();
+  // With a take in flight, rec.onstop posts its own "录好了 …" status.
+  if (!hadTake) setStatus('已回到第一拍,准备好按「继续」');
 }
 
 // Full release of mic/audio resources. Used when leaving the panel.
@@ -1650,6 +1676,7 @@ export function initRealtime(): void {
     wrap: document.getElementById('rt-canvas-wrap') as HTMLElement,
     bpmInput: document.getElementById('rt-bpm') as HTMLInputElement,
     accentInput: document.getElementById('rt-accent') as HTMLInputElement,
+    countInInput: document.getElementById('rt-countin') as HTMLInputElement,
     visibleBeatsInput: document.getElementById('rt-visible-beats') as HTMLInputElement,
     centsGoodInput: document.getElementById('rt-cents-good') as HTMLInputElement,
     centsMedInput: document.getElementById('rt-cents-med') as HTMLInputElement,
@@ -1836,6 +1863,14 @@ export function initRealtime(): void {
     drawOnce();
   });
 
+  state.els.countInInput.value = String(state.countInBeats);
+  state.els.countInInput.addEventListener('change', () => {
+    const v = Math.max(0, Math.min(8, Math.floor(Number(state.els!.countInInput.value)) || 0));
+    state.countInBeats = v;
+    state.els!.countInInput.value = String(v);
+    saveSettings();
+  });
+
   state.els.visibleBeatsInput.value = String(state.visibleBeats);
   state.els.visibleBeatsInput.addEventListener('change', () => {
     const raw = Math.floor(Number(state.els!.visibleBeatsInput.value)) || DEFAULT_VISIBLE_BEATS;
@@ -1938,7 +1973,7 @@ export function initRealtime(): void {
   }
 
   state.els.startBtn.addEventListener('click', togglePlayPause);
-  state.els.clearBtn.addEventListener('click', clearData);
+  state.els.clearBtn.addEventListener('click', () => { void redo(); });
   state.els.recordToggles.forEach(btn => {
     btn.addEventListener('click', () => {
       const on = btn.dataset.value === 'on';
@@ -1991,6 +2026,13 @@ export function initRealtime(): void {
 
   updatePitchReadout(-1);
   drawOnce();
+
+  // Dev-only handle on the live state. Almost everything here lives in a
+  // canvas, so without this there's no way to inspect the clock, the take
+  // list or the loaded track from the console. Stripped from prod builds.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __pavlov?: typeof state }).__pavlov = state;
+  }
 }
 
 // ── Pan interaction (only active when stopped) ─────────────────────────────
