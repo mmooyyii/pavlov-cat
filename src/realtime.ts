@@ -8,7 +8,7 @@ import {
 import { Drone, type DroneMode } from './drone';
 import { analyze, analyzeRhythm, type CentsEntry, type Report } from './report';
 import { parseMusicXml } from './musicxml';
-import { scoresAll, scoresPut, scoresDelete, type ScoreEntry } from './library';
+import { scoresAll, scoresPut, scoresReplace, scoresDelete, type ScoreEntry } from './library';
 import { readMxl } from './mxl';
 import { t, applyI18n, onLangChange, setLang, getLang, LANGS, type Lang, type MsgKey } from './i18n';
 
@@ -662,6 +662,8 @@ async function applyDrone(): Promise<void> {
 // ── Score library (MusicXML) ─────────────────────────────────────────────────
 // Scores are imported a folder at a time and kept in IndexedDB, so the picker
 // in the toolbar is the only thing the user touches when switching pieces.
+// Where showDirectoryPicker exists (desktop Chrome / Edge) a folder is only
+// indexed — file names and handles — and each score is read when first opened.
 const LEGACY_SCORE_KEY = 'pavlov-cat:score:v1';   // pre-library single score
 const SCORE_EXT = /\.(musicxml|xml|mxl)$/i;
 
@@ -678,6 +680,17 @@ function scoreIdOf(file: File): string {
   if (!rel) return file.name;
   return rel.replace(/\\/g, '/').replace(/^[A-Za-z0-9_-]+:/, '').replace(/^\/+/, '') || file.name;
 }
+
+// Neither the picker nor handle permissions are in lib.dom yet.
+type DirPickerWindow = Window & {
+  showDirectoryPicker?: (opts?: { id?: string; mode?: 'read' }) => Promise<FileSystemDirectoryHandle>;
+};
+type ReadableHandle = FileSystemFileHandle & {
+  queryPermission?: (d: { mode: 'read' }) => Promise<PermissionState>;
+  requestPermission?: (d: { mode: 'read' }) => Promise<PermissionState>;
+};
+
+const titleOfPath = (id: string): string => id.slice(id.lastIndexOf('/') + 1).replace(/\.[^.]+$/, '');
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, c => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
@@ -744,7 +757,7 @@ function renderDir(node: DirNode, depth: number): string {
     out.push(
       `<div class="tree-row tree-file${active ? ' active' : ''}" data-id="${escapeAttr(f.id)}" style="--depth:${depth}" title="${escapeAttr(f.id)}">` +
         `<span class="tree-name">${escapeHtml(f.title)}</span>` +
-        `<span class="tree-count">${t('lib.noteCount', { n: f.track.notes.length })}</span>` +
+        `<span class="tree-count">${f.track ? t('lib.noteCount', { n: f.track.notes.length }) : ''}</span>` +
         `<button class="tree-del" type="button" data-del="${escapeAttr(f.id)}" title="${escapeAttr(t('lib.remove'))}" aria-label="${escapeAttr(t('lib.removeAria', { title: f.title }))}">✕</button>` +
       `</div>`,
     );
@@ -797,7 +810,7 @@ function selectScore(id: string | null, { rewind = true } = {}): void {
   const entry = id == null ? null : state.library.find(e => e.id === id) ?? null;
   state.scoreId = entry?.id ?? null;
   state.track = entry?.track ?? null;
-  if (entry?.track.bpm) {
+  if (entry?.track?.bpm) {
     state.bpm = Math.max(40, Math.min(220, Math.round(entry.track.bpm)));
     if (state.els) state.els.bpmInput.value = String(state.bpm);
   }
@@ -805,6 +818,97 @@ function selectScore(id: string | null, { rewind = true } = {}): void {
   saveSettings();
   if (rewind) clearData();     // play the new piece from the top
   drawOnce();
+}
+
+// Open a score from the tree, reading it first if it was only indexed. The
+// parsed track is cached on the entry, so each file is read once; re-picking
+// the folder drops the cache and re-reads on next open.
+async function openScore(id: string, { rewind = true } = {}): Promise<void> {
+  const entry = state.library.find(e => e.id === id);
+  if (!entry) return;
+  if (!entry.track && !(await loadTrack(entry))) return;
+  selectScore(id, { rewind });
+}
+
+async function loadTrack(entry: ScoreEntry): Promise<boolean> {
+  const h = entry.handle as ReadableHandle | undefined;
+  if (!h) return false;
+  // Permission to a picked folder lasts for the page session; after a reload
+  // Chrome asks again, which needs the click that got us here.
+  if (h.queryPermission && (await h.queryPermission({ mode: 'read' })) !== 'granted'
+    && (await h.requestPermission?.({ mode: 'read' })) !== 'granted') {
+    setStatus(t('lib.noPermission'), true);
+    return false;
+  }
+  let file: File;
+  try { file = await h.getFile(); } catch {
+    setStatus(t('lib.loadFailed', { title: entry.title }), true);
+    return false;
+  }
+  try {
+    entry.track = parseMusicXml(await scoreTextOf(file), entry.title);
+  } catch (e) {
+    setStatus(`${entry.title}: ${e instanceof Error ? e.message : t('err.xmlInvalid')}`, true);
+    return false;
+  }
+  entry.title = entry.track.title;
+  try {
+    await scoresPut([entry]);
+    state.library = await scoresAll();   // the real title may sort differently
+  } catch { /* cache is best-effort: the piece still plays this session */ }
+  return true;
+}
+
+// Index a folder: walk it for score files, store one handle each, read none.
+// Ids keep the "<folder>/<path>" shape webkitdirectory used, so re-picking a
+// folder imported the old way replaces those entries instead of doubling them.
+async function pickScoreFolder(): Promise<void> {
+  let dir: FileSystemDirectoryHandle;
+  try {
+    dir = await (window as DirPickerWindow).showDirectoryPicker!({ id: 'scores', mode: 'read' });
+  } catch { return; }   // picker dismissed
+
+  setStatus(t('lib.scanning'));
+  const found: { id: string; handle: FileSystemFileHandle }[] = [];
+  const walk = async (d: FileSystemDirectoryHandle, path: string): Promise<void> => {
+    for await (const h of d.values()) {
+      if (h.name.startsWith('.')) continue;
+      const p = `${path}/${h.name}`;
+      if (h.kind === 'directory') await walk(h as FileSystemDirectoryHandle, p);
+      else if (SCORE_EXT.test(h.name)) found.push({ id: p, handle: h as FileSystemFileHandle });
+    }
+  };
+  try { await walk(dir, dir.name); } catch {
+    setStatus(t('lib.scanFailed'), true);
+    return;
+  }
+  if (!found.length) { setStatus(t('lib.noScores')); return; }
+
+  const prev = new Map(state.library.map(e => [e.id, e]));
+  const fresh = new Set(found.map(f => f.id));
+  const now = Date.now();
+  const put: ScoreEntry[] = found.map(({ id, handle }) =>
+    ({ id, title: titleOfPath(id), handle, addedAt: prev.get(id)?.addedAt ?? now }));
+  // Scores deleted from the folder on disk leave the library with it.
+  const del = state.library.filter(e => e.id.startsWith(`${dir.name}/`) && !fresh.has(e.id)).map(e => e.id);
+  try {
+    await scoresReplace(put, del);
+    state.library = await scoresAll();
+  } catch (e) {
+    setStatus(e instanceof Error ? e.message : t('lib.writeFailed'));
+    return;
+  }
+
+  // Refreshing the folder you're practicing from keeps you on your piece;
+  // otherwise land on its first score so something plays at once.
+  const target = state.scoreId && fresh.has(state.scoreId)
+    ? state.scoreId
+    : state.library.find(e => fresh.has(e.id))?.id;
+  if (target) await openScore(target, { rewind: target !== state.scoreId });
+  else refreshScoreUi();
+  if (!state.els?.statusEl.classList.contains('error')) {
+    setStatus(`${t('lib.indexed', { n: found.length })} · ${t('lib.total', { n: state.library.length })}`);
+  }
 }
 
 // .mxl is a zip around the same XML, so unwrap it before parsing.
@@ -864,7 +968,7 @@ async function removeScore(id: string): Promise<void> {
     return;
   }
   // Only the active piece needs re-picking; removing any other just redraws.
-  if (state.scoreId === id) selectScore(state.library[0]?.id ?? null);
+  if (state.scoreId === id) selectScore(state.library.find(e => e.track)?.id ?? null);
   else refreshScoreUi();
   setStatus(gone ? t('lib.removedTitle', { title: gone.title }) : t('lib.removed'));
 }
@@ -891,9 +995,10 @@ async function initLibrary(): Promise<void> {
   }
   if (legacy) { try { localStorage.removeItem(LEGACY_SCORE_KEY); } catch { /* */ } }
 
-  const pick = state.library.find(e => e.id === state.scoreId)?.id
+  // Only a score that has been read can be restored without a click.
+  const pick = state.library.find(e => e.id === state.scoreId && e.track)?.id
     ?? legacy?.id
-    ?? state.library[0]?.id
+    ?? state.library.find(e => e.track)?.id
     ?? null;
   // Boot-time restore: don't rewind, the session hasn't started yet.
   selectScore(pick, { rewind: false });
@@ -1871,6 +1976,14 @@ export function initRealtime(): void {
     if (files.length) void importScoreFiles(files);
   };
   state.els.dirInput.addEventListener('change', onPicked(state.els.dirInput));
+  // With showDirectoryPicker the folder is indexed instead of read in full;
+  // the webkitdirectory input stays as the fallback (Safari, Firefox).
+  if ((window as DirPickerWindow).showDirectoryPicker) {
+    state.els.dirInput.closest('label')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      void pickScoreFolder();
+    });
+  }
   state.els.fileInput.addEventListener('change', onPicked(state.els.fileInput));
 
   state.els.scoreBtn.addEventListener('click', (e) => {
@@ -1895,7 +2008,7 @@ export function initRealtime(): void {
       else state.collapsedDirs.add(path);
       refreshScoreUi();
     } else if (row.dataset.id) {
-      selectScore(row.dataset.id);
+      void openScore(row.dataset.id);
       toggleScorePanel(false);
     }
   });

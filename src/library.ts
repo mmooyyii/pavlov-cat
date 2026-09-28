@@ -1,15 +1,18 @@
 import type { TargetTrack } from './music';
 import { t } from './i18n';
 
-// Score library backed by IndexedDB. Importing a folder brings in dozens of
-// scores at once — more than localStorage should hold, and re-parsing every
-// file on each page load would be wasteful — so the parsed tracks are kept
-// here and the score picker is populated from them.
+// Score library backed by IndexedDB. A folder picked through
+// showDirectoryPicker is stored as an index only — one file handle per score,
+// no content — and a score is read and parsed the first time it's opened;
+// the parsed track is then cached on the entry. Picks that come as plain File
+// objects (multi-file pick, webkitdirectory) can't be re-read after a reload,
+// so those are parsed up front and stored with their track.
 
 export interface ScoreEntry {
   id: string;        // path inside the picked folder — unique and human-readable
   title: string;
-  track: TargetTrack;
+  track?: TargetTrack;               // absent until a lazily indexed score is first opened
+  handle?: FileSystemFileHandle;     // where to read it from, for folder-indexed scores
   addedAt: number;
 }
 
@@ -53,6 +56,22 @@ export async function scoresPut(entries: readonly ScoreEntry[]): Promise<void> {
     const tx = db.transaction(STORE, 'readwrite');
     const store = tx.objectStore(STORE);
     for (const e of entries) store.put(e);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error(t('err.dbWrite')));
+    tx.onabort = () => reject(tx.error ?? new Error(t('err.dbAbort')));
+  });
+}
+
+// Re-indexing a folder: write the fresh index and drop what vanished from disk
+// in one transaction, so the tree never shows a half-updated folder.
+export async function scoresReplace(put: readonly ScoreEntry[], del: readonly string[]): Promise<void> {
+  if (!put.length && !del.length) return;
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    for (const id of del) store.delete(id);
+    for (const e of put) store.put(e);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error ?? new Error(t('err.dbWrite')));
     tx.onabort = () => reject(tx.error ?? new Error(t('err.dbAbort')));
