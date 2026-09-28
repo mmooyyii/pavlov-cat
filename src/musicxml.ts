@@ -6,6 +6,11 @@ import { t } from './i18n';
 // Scope for v1: the first part, its first voice, monophonic melody line.
 // Chords keep the top note; other voices, backup/forward and grace notes are
 // skipped. Good enough for the single-line violin scores a learner practises.
+//
+// Whole measures of rest before the first note are dropped: a part that sits
+// out a long intro (e.g. 11 bars tacet) would otherwise open on an empty
+// screen for half a minute. Trimming by whole measures keeps the barlines —
+// and so the metronome accents — where the score has them.
 
 const STEP_SEMITONE: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 
@@ -27,9 +32,12 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
   let bpm: number | null = null;
   let pos = 0;                // current position in beats
   let firstVoice: string | null = null;
+  let measureStart = 0;       // beat where the current measure begins
+  let trim: number | null = null;   // start of the measure holding the first note
   const notes: TargetNote[] = [];
 
   for (const measure of Array.from(part.querySelectorAll('measure'))) {
+    measureStart = pos;
     for (const el of Array.from(measure.children)) {
       switch (el.tagName) {
         case 'attributes': {
@@ -71,6 +79,7 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
           const pitch = el.querySelector('pitch');
           if (!pitch) { pos += durBeat; break; }
           const midi = midiFromPitch(pitch);
+          if (trim == null) trim = measureStart;
           notes.push({ midi, startBeat: pos, durBeat, name: midiToNoteName(midi) });
           pos += durBeat;
           break;
@@ -82,7 +91,9 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
   }
 
   if (!notes.length) throw new Error(t('err.xmlNoNotes'));
+  const lead = trim ?? 0;
+  for (const n of notes) n.startBeat -= lead;
   const title = (doc.querySelector('work-title,movement-title')?.textContent
     ?? fallbackTitle).trim() || fallbackTitle;
-  return { notes, totalBeats: pos, title, bpm };
+  return { notes, totalBeats: pos - lead, title, bpm };
 }
