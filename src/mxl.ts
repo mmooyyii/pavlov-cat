@@ -1,3 +1,5 @@
+import { t } from './i18n';
+
 // Reader for .mxl — the zipped MusicXML that MuseScore, Sibelius and most
 // download sites hand out by default. A container that small doesn't justify a
 // zip dependency: we walk the central directory by hand and let the browser's
@@ -31,7 +33,7 @@ function findEocd(view: DataView): number {
 
 function readCentralDirectory(view: DataView, bytes: Uint8Array): ZipEntry[] {
   const eocd = findEocd(view);
-  if (eocd < 0) throw new Error('不是有效的 .mxl 压缩包');
+  if (eocd < 0) throw new Error(t('err.mxlInvalid'));
   const count = view.getUint16(eocd + 10, true);
   let at = view.getUint32(eocd + 16, true);
 
@@ -56,7 +58,7 @@ function readCentralDirectory(view: DataView, bytes: Uint8Array): ZipEntry[] {
 async function readEntry(entry: ZipEntry, view: DataView, bytes: Uint8Array): Promise<Uint8Array> {
   const at = entry.localOffset;
   if (at + 30 > view.byteLength || view.getUint32(at, true) !== LOCAL_SIG) {
-    throw new Error(`压缩包损坏:${entry.name}`);
+    throw new Error(t('err.mxlCorrupt', { name: entry.name }));
   }
   // Name/extra lengths come from the local header — they may differ from the
   // central directory's copies.
@@ -64,9 +66,9 @@ async function readEntry(entry: ZipEntry, view: DataView, bytes: Uint8Array): Pr
   const raw = bytes.subarray(start, start + entry.compressedSize);
 
   if (entry.method === 0) return raw;
-  if (entry.method !== 8) throw new Error(`不支持的压缩方式(${entry.method})`);
+  if (entry.method !== 8) throw new Error(t('err.mxlMethod', { m: entry.method }));
   if (typeof DecompressionStream === 'undefined') {
-    throw new Error('这个浏览器不支持解压 .mxl,请换新版 Chrome / Safari,或导出未压缩的 .musicxml');
+    throw new Error(t('err.mxlNoDecompress'));
   }
   const stream = new Blob([raw as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -101,7 +103,7 @@ export async function readMxl(buf: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buf);
   const view = new DataView(buf);
   const entries = readCentralDirectory(view, bytes);
-  if (!entries.length) throw new Error('压缩包是空的');
+  if (!entries.length) throw new Error(t('err.mxlEmpty'));
 
   const containerEntry = entries.find(e => e.name === 'META-INF/container.xml');
   let containerXml: string | null = null;
@@ -110,8 +112,8 @@ export async function readMxl(buf: ArrayBuffer): Promise<string> {
   }
 
   const name = pickScoreName(containerXml, entries);
-  if (!name) throw new Error('压缩包里没有找到 MusicXML');
+  if (!name) throw new Error(t('err.mxlNoXml'));
   const target = entries.find(e => e.name === name);
-  if (!target) throw new Error('压缩包里没有找到 MusicXML');
+  if (!target) throw new Error(t('err.mxlNoXml'));
   return decodeXml(await readEntry(target, view, bytes));
 }

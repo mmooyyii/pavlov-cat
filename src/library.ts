@@ -1,4 +1,5 @@
 import type { TargetTrack } from './music';
+import { t } from './i18n';
 
 // Score library backed by IndexedDB. Importing a folder brings in dozens of
 // scores at once — more than localStorage should hold, and re-parsing every
@@ -27,7 +28,7 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error('IndexedDB 打开失败'));
+    req.onerror = () => reject(req.error ?? new Error(t('err.dbOpen')));
   });
   return dbPromise;
 }
@@ -39,7 +40,7 @@ export async function scoresAll(): Promise<ScoreEntry[]> {
   const all = await new Promise<ScoreEntry[]>((resolve, reject) => {
     const req = db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
     req.onsuccess = () => resolve(req.result as ScoreEntry[]);
-    req.onerror = () => reject(req.error ?? new Error('读取曲库失败'));
+    req.onerror = () => reject(req.error ?? new Error(t('err.dbRead')));
   });
   return all.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
 }
@@ -49,31 +50,31 @@ export async function scoresPut(entries: readonly ScoreEntry[]): Promise<void> {
   if (!entries.length) return;
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const t = db.transaction(STORE, 'readwrite');
-    const store = t.objectStore(STORE);
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
     for (const e of entries) store.put(e);
-    t.oncomplete = () => resolve();
-    t.onerror = () => reject(t.error ?? new Error('写入曲库失败'));
-    t.onabort = () => reject(t.error ?? new Error('写入曲库中止'));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error(t('err.dbWrite')));
+    tx.onabort = () => reject(tx.error ?? new Error(t('err.dbAbort')));
   });
 }
 
 export async function scoresDelete(id: string): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const t = db.transaction(STORE, 'readwrite');
-    t.objectStore(STORE).delete(id);
-    t.oncomplete = () => resolve();
-    t.onerror = () => reject(t.error ?? new Error('删除失败'));
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error(t('err.dbDelete')));
   });
 }
 
 export async function scoresClear(): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const t = db.transaction(STORE, 'readwrite');
-    t.objectStore(STORE).clear();
-    t.oncomplete = () => resolve();
-    t.onerror = () => reject(t.error ?? new Error('清空曲库失败'));
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error(t('err.dbClear')));
   });
 }

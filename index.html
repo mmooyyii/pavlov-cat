@@ -35,9 +35,9 @@
         <h1>Pavlov Cat</h1>
       </div>
       <div class="mode-tabs" id="mode-tabs">
-        <button class="mode-tab active" data-mode="scale">跟音阶</button>
-        <button class="mode-tab" data-mode="score">跟乐谱</button>
-        <button class="mode-tab" data-mode="tuner">调弦</button>
+        <button class="mode-tab active" data-mode="scale" data-i18n="tab.scale">跟音阶</button>
+        <button class="mode-tab" data-mode="score" data-i18n="tab.score">跟乐谱</button>
+        <button class="mode-tab" data-mode="tuner" data-i18n="tab.tuner">调弦</button>
       </div>
     </header>
 
@@ -46,24 +46,24 @@
       <div id="realtime-panel">
         <div class="rt-toolbar">
           <div class="rt-control hidden" id="rt-scale-controls">
-            <span class="config-label">调</span>
+            <span class="config-label" data-i18n="tb.key">调</span>
             <select id="rt-key" class="rt-select"></select>
           </div>
           <div class="rt-control hidden" id="rt-score-controls">
-            <span class="config-label">曲目</span>
-            <button id="rt-score-btn" class="rt-score-btn" type="button" title="打开曲库,按文件夹挑谱" aria-haspopup="true" aria-expanded="false">
+            <span class="config-label" data-i18n="tb.score">曲目</span>
+            <button id="rt-score-btn" class="rt-score-btn" type="button" data-i18n-title="tb.scoreBtnTitle" title="打开曲库,按文件夹挑谱" aria-haspopup="true" aria-expanded="false">
               <span id="rt-score-name">曲库为空</span>
               <span class="rt-score-caret" aria-hidden="true">▾</span>
             </button>
 
             <div id="rt-score-panel" class="settings-panel score-panel hidden">
               <div class="score-panel-head">
-                <div class="sp-title">曲库</div>
+                <div class="sp-title" data-i18n="lib.title">曲库</div>
                 <span class="sp-inline">
-                  <label class="rt-mini-btn" title="选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子文件夹一次性全部导入。安卓上若点了没反应,改用右边「选文件」多选。">📁 文件夹
+                  <label class="rt-mini-btn" data-i18n-title="lib.dirTitle" title="选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子文件夹一次性全部导入。安卓上若点了没反应,改用右边「选文件」多选。"><span data-i18n="lib.dirBtn">📁 文件夹</span>
                     <input type="file" id="rt-dir" webkitdirectory multiple hidden />
                   </label>
-                  <label class="rt-mini-btn" title="在文件选择器里多选乐谱(安卓平板上用这个)">📄 选文件
+                  <label class="rt-mini-btn" data-i18n-title="lib.fileTitle" title="在文件选择器里多选乐谱(安卓平板上用这个)"><span data-i18n="lib.fileBtn">📄 选文件</span>
                     <input type="file" id="rt-file" accept=".musicxml,.xml,.mxl" multiple hidden />
                   </label>
                 </span>
@@ -76,81 +76,81 @@
             <input id="rt-bpm" type="number" min="40" max="220" step="1" value="80" />
           </div>
           <div class="rt-control">
-            <span class="config-label">节拍器</span>
+            <span class="config-label" data-i18n="tb.metronome">节拍器</span>
             <div class="toggle-group" id="rt-metronome-toggles">
-              <button class="toggle" data-value="on">开</button>
-              <button class="toggle active" data-value="off">关</button>
+              <button class="toggle" data-value="on" data-i18n="common.on">开</button>
+              <button class="toggle active" data-value="off" data-i18n="common.off">关</button>
             </div>
           </div>
           <div class="rt-control">
-            <span class="config-label">录音</span>
-            <div class="toggle-group" id="rt-record-toggles" title="开着就录下你拉的每一遍;点「↺ 重来」存下这一遍并接着录下一遍,录好的在下面直接回放">
-              <button class="toggle" data-value="on">开</button>
-              <button class="toggle active" data-value="off">关</button>
+            <span class="config-label" data-i18n="tb.record">录音</span>
+            <div class="toggle-group" id="rt-record-toggles" data-i18n-title="tb.recordTitle" title="开着就录下你拉的每一遍;点「↺ 重来」存下这一遍并接着录下一遍,录好的在下面直接回放">
+              <button class="toggle" data-value="on" data-i18n="common.on">开</button>
+              <button class="toggle active" data-value="off" data-i18n="common.off">关</button>
             </div>
           </div>
           <div class="rt-control">
-            <span class="config-label">参考音</span>
+            <span class="config-label" data-i18n="tb.drone">参考音</span>
             <div class="toggle-group" id="rt-drone-toggles">
-              <button class="toggle active" data-value="off">关</button>
-              <button class="toggle" data-value="root">主音</button>
-              <button class="toggle" data-value="fifth">主音+五度</button>
+              <button class="toggle active" data-value="off" data-i18n="common.off">关</button>
+              <button class="toggle" data-value="root" data-i18n="drone.root">主音</button>
+              <button class="toggle" data-value="fifth" data-i18n="drone.fifth">主音+五度</button>
             </div>
           </div>
           <div class="tb-spacer"></div>
-          <button id="rt-settings-btn" class="rt-gear-btn" type="button" title="更多设置" aria-label="更多设置">⚙</button>
+          <button id="rt-settings-btn" class="rt-gear-btn" type="button" data-i18n-title="tb.settings" data-i18n-aria="tb.settings" title="更多设置" aria-label="更多设置">⚙</button>
 
           <div id="rt-settings-panel" class="settings-panel hidden">
             <div class="sp-group">
-              <div class="sp-title">节拍器</div>
+              <div class="sp-title" data-i18n="set.metronome">节拍器</div>
               <div class="sp-row">
-                <span class="sp-label">每 N 拍重音</span>
+                <span class="sp-label" data-i18n="set.accent">每 N 拍重音</span>
                 <input id="rt-accent" type="number" min="1" max="12" step="1" value="4" />
               </div>
               <div class="sp-row">
-                <span class="sp-label">预备拍</span>
+                <span class="sp-label" data-i18n="set.countIn">预备拍</span>
                 <input id="rt-countin" type="number" min="0" max="8" step="1" value="4"
-                       title="按「开始 / 继续」后原地空打几拍再进入,竖线上会倒数 4·3·2·1。这几拍一定有节拍声,节拍器关着也响。0 = 立刻开始" />
+                       data-i18n-title="set.countInTitle" title="按「开始 / 继续」后原地空打几拍再进入,竖线上会倒数 4·3·2·1。这几拍一定有节拍声,节拍器关着也响。0 = 立刻开始" />
               </div>
               <div class="sp-row">
-                <span class="sp-label">音色</span>
+                <span class="sp-label" data-i18n="set.sound">音色</span>
                 <select id="rt-sound" class="rt-select">
-                  <option value="wood">木质打点</option>
-                  <option value="click">电子 click</option>
-                  <option value="tom" selected>低音鼓点</option>
-                  <option value="hihat">Hi-hat</option>
+                  <option value="wood" data-i18n="sound.wood">木质打点</option>
+                  <option value="click" data-i18n="sound.click">电子 click</option>
+                  <option value="tom" selected data-i18n="sound.tom">低音鼓点</option>
+                  <option value="hihat" data-i18n="sound.hihat">Hi-hat</option>
                 </select>
               </div>
             </div>
             <div class="sp-group">
-              <div class="sp-title">音准判定</div>
+              <div class="sp-title" data-i18n="set.judge">音准判定</div>
               <div class="sp-row">
-                <span class="sp-label">判定着色</span>
+                <span class="sp-label" data-i18n="set.judgeColor">判定着色</span>
                 <div class="toggle-group" id="rt-judge-toggles">
-                  <button class="toggle active" data-value="on">开</button>
-                  <button class="toggle" data-value="off">关</button>
+                  <button class="toggle active" data-value="on" data-i18n="common.on">开</button>
+                  <button class="toggle" data-value="off" data-i18n="common.off">关</button>
                 </div>
               </div>
               <div class="sp-row">
-                <span class="sp-label">容差 (¢) 绿 / 黄</span>
+                <span class="sp-label" data-i18n="set.tolerance">容差 (¢) 绿 / 黄</span>
                 <span class="sp-inline">
-                  <input id="rt-cents-good" type="number" min="1" max="50" step="1" value="6" title="绿色阈值：误差 ≤ 此值（音分）" />
+                  <input id="rt-cents-good" type="number" min="1" max="50" step="1" value="6" data-i18n-title="set.tolGoodTitle" title="绿色阈值：误差 ≤ 此值（音分）" />
                   <span class="rt-range-sep">/</span>
-                  <input id="rt-cents-med" type="number" min="2" max="100" step="1" value="15" title="黄色阈值：误差 ≤ 此值（音分），超出则红色" />
+                  <input id="rt-cents-med" type="number" min="2" max="100" step="1" value="15" data-i18n-title="set.tolMedTitle" title="黄色阈值：误差 ≤ 此值（音分），超出则红色" />
                 </span>
               </div>
               <div class="sp-row" id="rt-temperament-row">
-                <span class="sp-label">音准标准</span>
-                <div class="toggle-group" id="rt-temperament-toggles" title="标准=平均律,通用;更协和=纯律,某些音更贴合和声、更干净。不确定就用标准。">
-                  <button class="toggle active" data-value="equal">标准</button>
-                  <button class="toggle" data-value="just">更协和</button>
+                <span class="sp-label" data-i18n="set.temperament">音准标准</span>
+                <div class="toggle-group" id="rt-temperament-toggles" data-i18n-title="set.temperamentTitle" title="标准=平均律,通用;更协和=纯律,某些音更贴合和声、更干净。不确定就用标准。">
+                  <button class="toggle active" data-value="equal" data-i18n="temp.equal">标准</button>
+                  <button class="toggle" data-value="just" data-i18n="temp.just">更协和</button>
                 </div>
               </div>
             </div>
             <div class="sp-group">
-              <div class="sp-title">显示</div>
+              <div class="sp-title" data-i18n="set.display">显示</div>
               <div class="sp-row" id="rt-range-row">
-                <span class="sp-label">音域</span>
+                <span class="sp-label" data-i18n="set.range">音域</span>
                 <span class="sp-inline">
                   <select id="rt-range-lo" class="rt-select"></select>
                   <span class="rt-range-sep">–</span>
@@ -158,47 +158,51 @@
                 </span>
               </div>
               <div class="sp-row">
-                <span class="sp-label">显示拍数</span>
+                <span class="sp-label" data-i18n="set.visibleBeats">显示拍数</span>
                 <input id="rt-visible-beats" type="number" min="4" max="32" step="1" value="32" />
               </div>
               <div class="sp-row">
-                <span class="sp-label">时间单位</span>
+                <span class="sp-label" data-i18n="set.unit">时间单位</span>
                 <div class="toggle-group" id="rt-unit-toggles">
-                  <button class="toggle active" data-value="beat">拍</button>
-                  <button class="toggle" data-value="second">秒</button>
+                  <button class="toggle active" data-value="beat" data-i18n="unit.beat">拍</button>
+                  <button class="toggle" data-value="second" data-i18n="unit.second">秒</button>
                 </div>
               </div>
             </div>
             <div class="sp-group">
-              <div class="sp-title">参考音</div>
+              <div class="sp-title" data-i18n="set.drone">参考音</div>
               <div class="sp-row">
-                <span class="sp-label">根音</span>
-                <select id="rt-drone-root" class="rt-select" title="参考长音的音高(拉琴时用它对音准)。跟音阶模式下自动跟随该调主音。"></select>
+                <span class="sp-label" data-i18n="set.droneRoot">根音</span>
+                <select id="rt-drone-root" class="rt-select" data-i18n-title="set.droneRootTitle" title="参考长音的音高(拉琴时用它对音准)。跟音阶模式下自动跟随该调主音。"></select>
               </div>
             </div>
             <div class="sp-group">
-              <div class="sp-title">设备</div>
+              <div class="sp-title" data-i18n="set.device">设备</div>
               <div class="sp-row">
-                <span class="sp-label">麦克风</span>
+                <span class="sp-label" data-i18n="set.mic">麦克风</span>
                 <span class="sp-inline">
-                  <select id="rt-mic" class="rt-select" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
-                  <button id="rt-mic-help-btn" class="rt-help-btn" type="button" title="没有麦克风 / 换设备收音?" aria-label="收音帮助">?</button>
+                  <select id="rt-mic" class="rt-select" data-i18n-title="set.micTitle" title="选择收音设备。Mac mini 无内置麦时,可选 iPhone(连续互通麦克风)"></select>
+                  <button id="rt-mic-help-btn" class="rt-help-btn" type="button" data-i18n-title="set.micHelpTitle" data-i18n-aria="set.micHelpAria" title="没有麦克风 / 换设备收音?" aria-label="收音帮助">?</button>
                 </span>
               </div>
               <div class="sp-row">
-                <span class="sp-label">节奏延迟</span>
-                <button id="rt-calibrate" class="rt-mini-btn" title="播放节拍声测量麦克风延迟,让节奏评分更准(需让麦克风能听到音箱声)">校准延迟</button>
+                <span class="sp-label" data-i18n="set.latency">节奏延迟</span>
+                <button id="rt-calibrate" class="rt-mini-btn" data-i18n="set.calibrate" data-i18n-title="set.calibrateTitle" title="播放节拍声测量麦克风延迟,让节奏评分更准(需让麦克风能听到音箱声)">校准延迟</button>
+              </div>
+              <div class="sp-row">
+                <span class="sp-label">语言 · Language</span>
+                <select id="rt-lang" class="rt-select"></select>
               </div>
               <div class="rt-help hidden" id="rt-mic-help">
-                <p class="rt-help-sub">Mac(无内置麦)用 iPhone 收音:</p>
-                <ol>
+                <p class="rt-help-sub" data-i18n="help.macTitle">Mac(无内置麦)用 iPhone 收音:</p>
+                <ol data-i18n-html="help.macSteps">
                   <li>Mac 与 iPhone 登录同一 Apple ID,都打开 Wi-Fi 和蓝牙并靠近(macOS Ventura+、iOS 16+)。</li>
                   <li>iPhone:设置 → 通用 → 隔空播放与接力 → 打开「连续互通相机」(这一项同时管麦克风)。</li>
                   <li>回到本页点一次「▶ 开始」授权麦克风 —— 「麦克风」下拉会出现"xxx 的 iPhone 麦克风",检测到会自动选中,也可手动选。或在 系统设置 → 声音 → 输入 里固定选 iPhone。</li>
                   <li>iPhone 无线收音延迟较大:要看节奏评分,先点一次「校准延迟」(需让 iPhone 能听到电脑音箱的节拍声)。</li>
                 </ol>
-                <p class="rt-help-sub">安卓平板 / 手机:</p>
-                <ol>
+                <p class="rt-help-sub" data-i18n="help.androidTitle">安卓平板 / 手机:</p>
+                <ol data-i18n-html="help.androidSteps">
                   <li>直接用平板浏览器(推荐 Chrome)打开本页,点「▶ 开始」后在弹窗里允许使用麦克风,自带麦克风即可收音。</li>
                   <li>外接 USB / 蓝牙麦克风后,可在「麦克风」下拉里切换;蓝牙麦克风延迟大,建议同样先「校准延迟」。</li>
                   <li>提示:浏览器只在 https(或 localhost)下允许用麦克风,局域网 IP 直接访问会拿不到权限。</li>
@@ -210,10 +214,10 @@
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">
           <canvas id="realtime-canvas"></canvas>
           <div class="rt-canvas-actions">
-            <button id="rt-start" class="rt-overlay-btn rt-overlay-btn-primary">▶ 开始</button>
-            <button id="rt-clear" class="rt-overlay-btn" title="这一遍到此为止:清空轨迹回到第一拍,正在录的话也一并存成一段录音">↺ 重来</button>
+            <button id="rt-start" class="rt-overlay-btn rt-overlay-btn-primary" data-i18n="btn.start">▶ 开始</button>
+            <button id="rt-clear" class="rt-overlay-btn" data-i18n="btn.redo" data-i18n-title="btn.redoTitle" title="这一遍到此为止:清空轨迹回到第一拍,正在录的话也一并存成一段录音">↺ 重来</button>
           </div>
-          <button id="rt-fullscreen" class="rt-fullscreen-btn" title="全屏 / 退出全屏" aria-label="全屏">⛶</button>
+          <button id="rt-fullscreen" class="rt-fullscreen-btn" data-i18n-title="btn.fullscreen" data-i18n-aria="btn.fullscreenAria" title="全屏 / 退出全屏" aria-label="全屏">⛶</button>
         </div>
         <div class="rt-readout">
           <span id="rt-pitch" class="rt-pitch">— Hz</span>
@@ -227,13 +231,13 @@
       <div id="tuner-view" class="hidden">
         <div class="tuner-card">
           <div class="tuner-note placeholder" id="tuner-note">—</div>
-          <div class="tuner-cents" id="tuner-cents">按「开始」并拉一个空弦</div>
+          <div class="tuner-cents" id="tuner-cents" data-i18n="tuner.idle">按「开始」并拉一个空弦</div>
           <div class="tuner-bar">
             <div class="tuner-center"></div>
             <div class="tuner-needle" id="tuner-needle"></div>
           </div>
           <div class="tuner-scale">
-            <span>偏低 ♭</span><span>准</span><span>偏高 ♯</span>
+            <span data-i18n="tuner.flat">偏低 ♭</span><span data-i18n="tuner.inTune">准</span><span data-i18n="tuner.sharp">偏高 ♯</span>
           </div>
           <div class="tuner-strings" id="tuner-strings">
             <span class="tuner-string" data-midi="55">G</span>
@@ -241,8 +245,8 @@
             <span class="tuner-string" data-midi="69">A</span>
             <span class="tuner-string" data-midi="76">E</span>
           </div>
-          <button id="tuner-start" class="rt-overlay-btn rt-overlay-btn-primary tuner-start">▶ 开始</button>
-          <p class="tuner-hint">拉空弦,让指针停在正中间。偏左=音偏低(把弦调紧一点),偏右=音偏高(调松一点)。基准 A4 = 442 Hz。</p>
+          <button id="tuner-start" class="rt-overlay-btn rt-overlay-btn-primary tuner-start" data-i18n="btn.start">▶ 开始</button>
+          <p class="tuner-hint" data-i18n="tuner.hint">拉空弦,让指针停在正中间。偏左=音偏低(把弦调紧一点),偏右=音偏高(调松一点)。基准 A4 = 442 Hz。</p>
         </div>
       </div>
     </main>

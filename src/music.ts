@@ -1,3 +1,5 @@
+import { t } from './i18n';
+
 // ── Shared music theory & pitch math ────────────────────────────────────────
 // Single source of truth for tuning and note math. Everything in the app that
 // converts between frequency / MIDI / note name goes through here so the
@@ -52,31 +54,31 @@ export interface Key {
 // anyone can scan. Enharmonic tonics get their conventional spelling (D♭ not
 // C♯ for the major, C♯ not D♭ for the minor). `sharps` is the key signature:
 // positive = that many sharps, negative = that many flats.
-export const COMMON_KEYS: { label: string; tonicPc: number; mode: Mode; sharps: number }[] = [
-  { label: 'C 大调',  tonicPc: 0,  mode: 'major', sharps: 0 },
-  { label: 'D♭ 大调', tonicPc: 1,  mode: 'major', sharps: -5 },
-  { label: 'D 大调',  tonicPc: 2,  mode: 'major', sharps: 2 },
-  { label: 'E♭ 大调', tonicPc: 3,  mode: 'major', sharps: -3 },
-  { label: 'E 大调',  tonicPc: 4,  mode: 'major', sharps: 4 },
-  { label: 'F 大调',  tonicPc: 5,  mode: 'major', sharps: -1 },
-  { label: 'F♯ 大调', tonicPc: 6,  mode: 'major', sharps: 6 },
-  { label: 'G 大调',  tonicPc: 7,  mode: 'major', sharps: 1 },
-  { label: 'A♭ 大调', tonicPc: 8,  mode: 'major', sharps: -4 },
-  { label: 'A 大调',  tonicPc: 9,  mode: 'major', sharps: 3 },
-  { label: 'B♭ 大调', tonicPc: 10, mode: 'major', sharps: -2 },
-  { label: 'B 大调',  tonicPc: 11, mode: 'major', sharps: 5 },
-  { label: 'C 小调',  tonicPc: 0,  mode: 'minor', sharps: -3 },
-  { label: 'C♯ 小调', tonicPc: 1,  mode: 'minor', sharps: 4 },
-  { label: 'D 小调',  tonicPc: 2,  mode: 'minor', sharps: -1 },
-  { label: 'E♭ 小调', tonicPc: 3,  mode: 'minor', sharps: -6 },
-  { label: 'E 小调',  tonicPc: 4,  mode: 'minor', sharps: 1 },
-  { label: 'F 小调',  tonicPc: 5,  mode: 'minor', sharps: -4 },
-  { label: 'F♯ 小调', tonicPc: 6,  mode: 'minor', sharps: 3 },
-  { label: 'G 小调',  tonicPc: 7,  mode: 'minor', sharps: -2 },
-  { label: 'G♯ 小调', tonicPc: 8,  mode: 'minor', sharps: 5 },
-  { label: 'A 小调',  tonicPc: 9,  mode: 'minor', sharps: 0 },
-  { label: 'B♭ 小调', tonicPc: 10, mode: 'minor', sharps: -5 },
-  { label: 'B 小调',  tonicPc: 11, mode: 'minor', sharps: 2 },
+export const COMMON_KEYS: { tonic: string; tonicPc: number; mode: Mode; sharps: number }[] = [
+  { tonic: 'C',  tonicPc: 0,  mode: 'major', sharps: 0 },
+  { tonic: 'D♭', tonicPc: 1,  mode: 'major', sharps: -5 },
+  { tonic: 'D',  tonicPc: 2,  mode: 'major', sharps: 2 },
+  { tonic: 'E♭', tonicPc: 3,  mode: 'major', sharps: -3 },
+  { tonic: 'E',  tonicPc: 4,  mode: 'major', sharps: 4 },
+  { tonic: 'F',  tonicPc: 5,  mode: 'major', sharps: -1 },
+  { tonic: 'F♯', tonicPc: 6,  mode: 'major', sharps: 6 },
+  { tonic: 'G',  tonicPc: 7,  mode: 'major', sharps: 1 },
+  { tonic: 'A♭', tonicPc: 8,  mode: 'major', sharps: -4 },
+  { tonic: 'A',  tonicPc: 9,  mode: 'major', sharps: 3 },
+  { tonic: 'B♭', tonicPc: 10, mode: 'major', sharps: -2 },
+  { tonic: 'B',  tonicPc: 11, mode: 'major', sharps: 5 },
+  { tonic: 'C',  tonicPc: 0,  mode: 'minor', sharps: -3 },
+  { tonic: 'C♯', tonicPc: 1,  mode: 'minor', sharps: 4 },
+  { tonic: 'D',  tonicPc: 2,  mode: 'minor', sharps: -1 },
+  { tonic: 'E♭', tonicPc: 3,  mode: 'minor', sharps: -6 },
+  { tonic: 'E',  tonicPc: 4,  mode: 'minor', sharps: 1 },
+  { tonic: 'F',  tonicPc: 5,  mode: 'minor', sharps: -4 },
+  { tonic: 'F♯', tonicPc: 6,  mode: 'minor', sharps: 3 },
+  { tonic: 'G',  tonicPc: 7,  mode: 'minor', sharps: -2 },
+  { tonic: 'G♯', tonicPc: 8,  mode: 'minor', sharps: 5 },
+  { tonic: 'A',  tonicPc: 9,  mode: 'minor', sharps: 0 },
+  { tonic: 'B♭', tonicPc: 10, mode: 'minor', sharps: -5 },
+  { tonic: 'B',  tonicPc: 11, mode: 'minor', sharps: 2 },
 ];
 
 // Sharps and flats always appear in these fixed orders, so the signature can
@@ -88,7 +90,12 @@ const FLAT_ORDER = ['B', 'E', 'A', 'D', 'G', 'C', 'F'] as const;
 export function keySignatureText(sharps: number): string {
   if (sharps > 0) return SHARP_ORDER.slice(0, sharps).map(n => `${n}♯`).join(' ');
   if (sharps < 0) return FLAT_ORDER.slice(0, -sharps).map(n => `${n}♭`).join(' ');
-  return '无升降号';
+  return t('key.noAccidentals');
+}
+
+/** Localized key name, e.g. "D 大调" / "D major". */
+export function keyLabel(k: { tonic: string; mode: Mode }): string {
+  return t(k.mode === 'major' ? 'key.major' : 'key.minor', { tonic: k.tonic });
 }
 
 // D major: open-string resonance makes it the friendliest starting key on a

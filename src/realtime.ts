@@ -1,7 +1,7 @@
 import { detectPitch } from './pitch';
 import {
   A4_HZ, freqToMidi, midiToFreq, midiToNoteName,
-  COMMON_KEYS, DEFAULT_KEY_INDEX, LEGACY_KEY_ORDER, keySignatureText,
+  COMMON_KEYS, DEFAULT_KEY_INDEX, LEGACY_KEY_ORDER, keySignatureText, keyLabel,
   isInScale, targetFreq, type Key, type Mode, type Temperament,
   type TargetNote, type TargetTrack,
 } from './music';
@@ -10,6 +10,7 @@ import { analyze, analyzeRhythm, type CentsEntry, type Report } from './report';
 import { parseMusicXml } from './musicxml';
 import { scoresAll, scoresPut, scoresDelete, type ScoreEntry } from './library';
 import { readMxl } from './mxl';
+import { t, applyI18n, onLangChange, setLang, getLang, LANGS, type Lang, type MsgKey } from './i18n';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 const FFT_SIZE = 2048;                  // pitch detection window (~43ms @ 48kHz)
@@ -178,7 +179,7 @@ const state = {
 
   // Microphone input device (Mac mini has no built-in mic → pick iPhone etc.)
   micDeviceId: null as string | null,
-  micError: null as string | null,      // shown centered on the stage when set
+  micError: null as MsgKey | null,      // shown centered on the stage when set
 
   // Audio recording. Takes stay on the page so you can listen back right away;
   // downloading is a deliberate second step (⬇ on the take).
@@ -604,16 +605,16 @@ async function start(): Promise<void> {
     state.micStream = await openMicStream();
   } catch (e) {
     const name = e instanceof DOMException ? e.name : '';
-    let msg: string;
+    let msg: MsgKey;
     if (name === 'NotAllowedError' || name === 'SecurityError') {
-      msg = '浏览器拒绝了麦克风权限 — 点地址栏右侧的图标改为「允许」,再按开始';
+      msg = 'mic.denied';
     } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
-      msg = '没有找到麦克风 — Mac 可用 iPhone 连续互通收音:⚙ → 设备 → 点 ? 看设置方法';
+      msg = 'mic.notFound';
     } else {
-      msg = '无法访问麦克风,请检查权限或换一个输入设备';
+      msg = 'mic.failed';
     }
     state.micError = msg;
-    setStatus(msg, true);
+    setStatus(t(msg), true);
     updateStartBtn();
     drawOnce();
     return;
@@ -738,13 +739,13 @@ function renderDir(node: DirNode, depth: number): string {
     );
     if (open) out.push(renderDir(d, depth + 1));
   }
-  for (const f of [...node.files].sort((a, b) => a.title.localeCompare(b.title, 'zh'))) {
+  for (const f of [...node.files].sort((a, b) => a.title.localeCompare(b.title, getLang()))) {
     const active = f.id === state.scoreId;
     out.push(
       `<div class="tree-row tree-file${active ? ' active' : ''}" data-id="${escapeAttr(f.id)}" style="--depth:${depth}" title="${escapeAttr(f.id)}">` +
         `<span class="tree-name">${escapeHtml(f.title)}</span>` +
-        `<span class="tree-count">${f.track.notes.length} 音</span>` +
-        `<button class="tree-del" type="button" data-del="${escapeAttr(f.id)}" title="从曲库移除" aria-label="移除 ${escapeAttr(f.title)}">✕</button>` +
+        `<span class="tree-count">${t('lib.noteCount', { n: f.track.notes.length })}</span>` +
+        `<button class="tree-del" type="button" data-del="${escapeAttr(f.id)}" title="${escapeAttr(t('lib.remove'))}" aria-label="${escapeAttr(t('lib.removeAria', { title: f.title }))}">✕</button>` +
       `</div>`,
     );
   }
@@ -762,12 +763,12 @@ function refreshScoreUi(): void {
   const active = state.library.find(e => e.id === state.scoreId) ?? null;
   state.els.scoreName.textContent = active
     ? active.title
-    : state.library.length ? '选一首…' : '曲库为空';
+    : state.library.length ? t('lib.pick') : t('lib.empty');
   state.els.scoreBtn.classList.toggle('placeholder', !active);
 
   state.els.scoreTree.innerHTML = state.library.length
     ? renderDir(treeRoots(buildTree(state.library)), 0)
-    : '<p class="tree-empty">还没有乐谱。点上面「📁 导入文件夹」,选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子目录一次全部导入。</p>';
+    : `<p class="tree-empty">${escapeHtml(t('lib.emptyHint'))}</p>`;
 }
 
 function toggleScorePanel(show?: boolean): void {
@@ -816,11 +817,11 @@ async function scoreTextOf(file: File): Promise<string> {
 async function importScoreFiles(files: readonly File[]): Promise<void> {
   const candidates = files.filter(f => SCORE_EXT.test(f.name));
   if (!candidates.length) {
-    setStatus('这个文件夹里没有乐谱(.musicxml / .xml / .mxl)');
+    setStatus(t('lib.noScores'));
     return;
   }
 
-  setStatus(`正在导入 ${candidates.length} 个乐谱…`);
+  setStatus(t('lib.importing', { n: candidates.length }));
   const entries: ScoreEntry[] = [];
   const failed: string[] = [];
   for (const file of candidates) {
@@ -832,7 +833,7 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
     }
   }
   if (!entries.length) {
-    setStatus(`导入失败:${failed.length} 个文件都解析不了`);
+    setStatus(t('lib.importAllFailed', { n: failed.length }));
     return;
   }
 
@@ -840,7 +841,7 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
     await scoresPut(entries);
     state.library = await scoresAll();
   } catch (e) {
-    setStatus(e instanceof Error ? e.message : '曲库写入失败');
+    setStatus(e instanceof Error ? e.message : t('lib.writeFailed'));
     return;
   }
 
@@ -848,9 +849,9 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
   const firstId = state.library.find(e => entries.some(n => n.id === e.id))?.id ?? entries[0].id;
   selectScore(firstId);
 
-  const parts = [`已导入 ${entries.length} 首`];
-  if (failed.length) parts.push(`${failed.length} 首解析失败`);
-  setStatus(`${parts.join(',')} · 曲库共 ${state.library.length} 首`);
+  const parts = [t('lib.imported', { n: entries.length })];
+  if (failed.length) parts.push(t('lib.parseFailed', { n: failed.length }));
+  setStatus(`${parts.join(t('lib.listSep'))} · ${t('lib.total', { n: state.library.length })}`);
 }
 
 async function removeScore(id: string): Promise<void> {
@@ -859,13 +860,13 @@ async function removeScore(id: string): Promise<void> {
     await scoresDelete(id);
     state.library = await scoresAll();
   } catch {
-    setStatus('删除失败');
+    setStatus(t('lib.deleteFailed'));
     return;
   }
   // Only the active piece needs re-picking; removing any other just redraws.
   if (state.scoreId === id) selectScore(state.library[0]?.id ?? null);
   else refreshScoreUi();
-  setStatus(gone ? `已移除:${gone.title}` : '已移除');
+  setStatus(gone ? t('lib.removedTitle', { title: gone.title }) : t('lib.removed'));
 }
 
 // Load the library at boot, migrating the single score older versions kept in
@@ -916,19 +917,19 @@ async function populateMicList(): Promise<void> {
     if (iphone && iphone.deviceId) {
       state.micDeviceId = iphone.deviceId;
       saveSettings();
-      setStatus('已自动选择 iPhone 麦克风');
+      setStatus(t('mic.autoIphone'));
     }
   }
 
   sel.innerHTML = '';
   const def = document.createElement('option');
   def.value = '';
-  def.textContent = '系统默认输入';
+  def.textContent = t('mic.default');
   sel.appendChild(def);
   for (const d of inputs) {
     const o = document.createElement('option');
     o.value = d.deviceId;
-    o.textContent = d.label || '麦克风';
+    o.textContent = d.label || t('mic.unnamed');
     sel.appendChild(o);
   }
   sel.value = state.micDeviceId ?? '';
@@ -944,7 +945,7 @@ async function switchMic(deviceId: string): Promise<void> {
   try {
     state.micStream = await openMicStream();
   } catch {
-    setStatus('无法切换到该输入设备');
+    setStatus(t('mic.switchFailed'));
     return;
   }
   state.micSource = state.ctx.createMediaStreamSource(state.micStream);
@@ -971,7 +972,7 @@ async function pause({ summary = true } = {}): Promise<void> {
 
   if (summary) {
     // The take is paused, not lost — 继续 resumes into it, 重来 files it.
-    setStatus(wasRecording ? '已暂停 · 录音跟着停住了,点「↺ 重来」就保存这一段' : '已暂停');
+    setStatus(wasRecording ? t('status.pausedRec') : t('status.paused'));
   }
   updatePitchReadout(-1);
   updateStartBtn();
@@ -1039,7 +1040,7 @@ async function redo(): Promise<void> {
   await pause({ summary: false });   // report would only describe a trail we're about to wipe
   clearData();
   // With a take in flight, rec.onstop posts its own "录好了 …" status.
-  if (!hadTake) setStatus('已回到第一拍,准备好按「继续」');
+  if (!hadTake) setStatus(t('status.rewound'));
 }
 
 // Full release of mic/audio resources. Used when leaving the panel.
@@ -1421,10 +1422,10 @@ function drawOnce(): void {
     ctx2d.textBaseline = 'middle';
     ctx2d.font = `600 ${Math.round(15 * scale)}px -apple-system, system-ui, sans-serif`;
     ctx2d.fillStyle = '#ff9f0a';
-    ctx2d.fillText('⚠ 无法开始', W / 2, H / 2 - 16 * scale);
+    ctx2d.fillText(t('canvas.cannotStart'), W / 2, H / 2 - 16 * scale);
     ctx2d.font = `${Math.round(13 * scale)}px -apple-system, system-ui, sans-serif`;
     ctx2d.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx2d.fillText(state.micError, W / 2, H / 2 + 10 * scale);
+    ctx2d.fillText(t(state.micError), W / 2, H / 2 + 10 * scale);
     ctx2d.restore();
   }
 }
@@ -1442,12 +1443,12 @@ function updateStartBtn(): void {
   // that's still "开始", not "继续".
   const resumable = !!state.ctx && !!state.analyser;
   let label: string;
-  if (state.running) label = '⏸ 暂停';
-  else if (resumable) label = '▶ 继续';
-  else label = '▶ 开始';
+  if (state.running) label = t('btn.pause');
+  else if (resumable) label = t('btn.resume');
+  else label = t('btn.start');
   state.els.startBtn.textContent = label;
   // Tuner has its own start button; when tuning, "暂停" reads oddly, so show 停止.
-  state.els.tunerStartBtn.textContent = state.running ? '⏸ 停止' : (resumable ? '▶ 继续' : '▶ 开始');
+  state.els.tunerStartBtn.textContent = state.running ? t('btn.stop') : (resumable ? t('btn.resume') : t('btn.start'));
   state.refreshPanCursor?.();
 }
 
@@ -1545,34 +1546,33 @@ function showReport(): void {
 
   const round = (n: number): string => `${n < 0 ? '−' : ''}${Math.abs(Math.round(n))}`;
   let tendency = '';
-  if (r.tendency > state.centsToleranceGood) tendency = `<span class="report-note">整体偏高 ${round(r.tendency)}¢,容易拉高</span>`;
-  else if (r.tendency < -state.centsToleranceGood) tendency = `<span class="report-note">整体偏低 ${round(r.tendency)}¢,容易拉低</span>`;
+  if (r.tendency > state.centsToleranceGood) tendency = `<span class="report-note">${t('rep.tendHigh', { c: round(r.tendency) })}</span>`;
+  else if (r.tendency < -state.centsToleranceGood) tendency = `<span class="report-note">${t('rep.tendLow', { c: round(r.tendency) })}</span>`;
 
   let worst: string;
   if (r.worst.length === 0) {
-    worst = '<div class="report-good">音准很稳,继续保持!</div>';
+    worst = `<div class="report-good">${t('rep.allGood')}</div>`;
   } else {
-    worst = '<div class="report-worst-title">最需要注意</div><ul class="report-worst">' + r.worst.map(w => {
-      const dir = w.meanCents > 0 ? '偏高' : '偏低';
-      const tip = w.meanCents > 0 ? '手指往下挪一点点' : '手指往上挪一点点';
-      return `<li><b>${w.name}</b> 平均${dir} ${round(w.meanCents)}¢ · ${tip}</li>`;
-    }).join('') + '</ul>';
+    worst = `<div class="report-worst-title">${t('rep.worstTitle')}</div><ul class="report-worst">` + r.worst.map(w =>
+      `<li>${t(w.meanCents > 0 ? 'rep.noteHigh' : 'rep.noteLow', { name: w.name, c: round(w.meanCents) })}</li>`,
+    ).join('') + '</ul>';
   }
 
   const rh = computeRhythm();
   let rhythmHtml = '';
   if (rh) {
     const r2 = analyzeRhythm(rh.errorsMs, rh.onTimeMs);
-    const tend = r2.tendencyMs > 20 ? `偏晚 ${Math.round(r2.tendencyMs)}ms`
-      : r2.tendencyMs < -20 ? `偏早 ${Math.round(-r2.tendencyMs)}ms` : '基本准时';
-    const cal = state.micLatency > 0 ? '' : ' <span class="report-hint">(未校准延迟,偏早/晚仅供参考)</span>';
-    rhythmHtml = `<div class="report-rhythm">节奏(近似):准时 ${Math.round(r2.onTimePct)}% · 平均偏差 ${Math.round(r2.meanAbsMs)}ms · ${tend}${cal}</div>`;
+    const tend = r2.tendencyMs > 20 ? t('rep.late', { ms: Math.round(r2.tendencyMs) })
+      : r2.tendencyMs < -20 ? t('rep.early', { ms: Math.round(-r2.tendencyMs) }) : t('rep.onTime');
+    const cal = state.micLatency > 0 ? '' : ` <span class="report-hint">${t('rep.uncalibrated')}</span>`;
+    const line = t('rep.rhythm', { pct: Math.round(r2.onTimePct), ms: Math.round(r2.meanAbsMs), tend });
+    rhythmHtml = `<div class="report-rhythm">${line}${cal}</div>`;
   }
 
   el.innerHTML = `
     <div class="report-head">
-      <span class="report-score">评分 <b>${r.score}</b></span>
-      <span class="report-bars">在调 ${Math.round(r.inTunePct)}% · 接近 ${Math.round(r.closePct)}% · 跑调 ${Math.round(r.offPct)}%</span>
+      <span class="report-score">${t('rep.score')} <b>${r.score}</b></span>
+      <span class="report-bars">${t('rep.bars', { a: Math.round(r.inTunePct), b: Math.round(r.closePct), c: Math.round(r.offPct) })}</span>
       ${tendency}
     </div>
     ${rhythmHtml}
@@ -1589,7 +1589,7 @@ function updateTuner(freq: number): void {
   if (freq <= 0) {
     tunerNote.textContent = '—';
     tunerNote.classList.add('placeholder');
-    tunerCents.textContent = '拉一个音…';
+    tunerCents.textContent = t('tuner.play');
     tunerCents.className = 'tuner-cents';
     tunerNeedle.style.left = '50%';
     tunerNeedle.className = 'tuner-needle';
@@ -1605,8 +1605,8 @@ function updateTuner(freq: number): void {
   const absC = Math.abs(cents);
   const band = absC <= state.centsToleranceGood ? 'good'
     : absC <= state.centsToleranceMed ? 'med' : 'bad';
-  const word = absC <= state.centsToleranceGood ? '准 ✓'
-    : cents < 0 ? `偏低 ${cents}¢ · 调紧一点` : `偏高 +${cents}¢ · 调松一点`;
+  const word = absC <= state.centsToleranceGood ? t('tuner.good')
+    : cents < 0 ? t('tuner.low', { c: cents }) : t('tuner.high', { c: cents });
   tunerCents.textContent = word;
   tunerCents.className = `tuner-cents ${band}`;
 
@@ -1660,7 +1660,7 @@ function selectMode(tab: TabMode): void {
       if (!state.running && !state.ctx) {
         void start().then(() => {
           if (!state.running) {
-            state.els!.tunerCents.textContent = state.micError ?? '无法访问麦克风,请检查权限或设备';
+            state.els!.tunerCents.textContent = t(state.micError ?? 'mic.failedShort');
             state.els!.tunerCents.className = 'tuner-cents bad';
           }
         });
@@ -1717,9 +1717,41 @@ function updatePitchReadout(freq: number): void {
   state.els.pitchEl.textContent = `${freq.toFixed(1)} Hz · ${midiToNoteName(midiRound)} ${sign}${cents}¢`;
 }
 
+// Key + temperament for scale mode. Each option spells out its key signature
+// ("D 大调 · F♯ C♯") so picking a key doesn't require knowing it by heart.
+function renderKeyOptions(): void {
+  if (!state.els) return;
+  const keyOptions = (mode: Mode): string => COMMON_KEYS
+    .map((k, i) => ({ k, i }))
+    .filter(x => x.k.mode === mode)
+    .map(({ k, i }) => `<option value="${i}">${keyLabel(k)} · ${keySignatureText(k.sharps)}</option>`)
+    .join('');
+  state.els.keySelect.innerHTML =
+    `<optgroup label="${t('key.majorGroup')}">${keyOptions('major')}</optgroup>` +
+    `<optgroup label="${t('key.minorGroup')}">${keyOptions('minor')}</optgroup>`;
+  state.els.keySelect.value = String(state.keyIndex);
+}
+
+// Language switch: static markup is re-filled by applyI18n(); everything
+// built in code is redrawn here. A status line in the old language would
+// linger, so it's cleared.
+function onLanguageChanged(): void {
+  if (!state.els) return;
+  renderKeyOptions();
+  refreshScoreUi();
+  refreshTakes();
+  updateStartBtn();
+  void populateMicList();
+  if (state.viewMode === 'tuner' && state.running) updateTuner(-1);
+  if (!state.els.reportEl.classList.contains('hidden')) showReport();
+  setStatus('');
+  drawOnce();
+}
+
 // ── Public init ────────────────────────────────────────────────────────────
 export function initRealtime(): void {
   loadSettings();   // hydrate state from localStorage before binding UI
+  applyI18n();
 
   state.els = {
     canvas: document.getElementById('realtime-canvas') as HTMLCanvasElement,
@@ -1797,19 +1829,15 @@ export function initRealtime(): void {
   state.els.rangeLoSelect.addEventListener('change', onRangeChange);
   state.els.rangeHiSelect.addEventListener('change', onRangeChange);
 
-  // Key + temperament for scale mode. Each option spells out its key signature
-  // ("D 大调 · F♯ C♯") so picking a key doesn't require knowing it by heart.
-  const keyOptions = (mode: Mode): string => COMMON_KEYS
-    .map((k, i) => ({ k, i }))
-    .filter(x => x.k.mode === mode)
-    .map(({ k, i }) => `<option value="${i}">${k.label} · ${keySignatureText(k.sharps)}</option>`)
-    .join('');
-  state.els.keySelect.innerHTML =
-    `<optgroup label="大调">${keyOptions('major')}</optgroup>` +
-    `<optgroup label="小调">${keyOptions('minor')}</optgroup>`;
-  state.els.keySelect.value = String(state.keyIndex);
+  renderKeyOptions();
 
-  refreshScoreUi();     // empty-state placeholder until IndexedDB answers
+  const langSelect = document.getElementById('rt-lang') as HTMLSelectElement;
+  langSelect.innerHTML = LANGS.map(l => `<option value="${l.code}">${l.label}</option>`).join('');
+  langSelect.value = getLang();
+  langSelect.addEventListener('change', () => setLang(langSelect.value as Lang));
+  onLangChange(onLanguageChanged);
+
+  refreshScoreUi();    // empty-state placeholder until IndexedDB answers
   void initLibrary();
   updateModeUi();   // reflect the persisted refMode in tabs + contextual controls
 
@@ -2173,7 +2201,7 @@ function setRecordArmed(on: boolean): void {
   updateRecordBtn();
   if (on) {
     if (state.running) beginRecording();
-    else setStatus('已开启录音,点「▶ 开始」就会录下这一遍');
+    else setStatus(t('rec.armed'));
   } else if (state.recording) {
     state.recorder?.stop();               // onstop files the take
   } else {
@@ -2184,14 +2212,14 @@ function setRecordArmed(on: boolean): void {
 // Record the raw microphone (just the playing, not metronome/drone).
 function beginRecording(): void {
   if (state.recording) return;
-  if (!state.micStream) { setStatus('无法录音:麦克风未就绪'); return; }
+  if (!state.micStream) { setStatus(t('rec.micNotReady')); return; }
 
   const mime = pickRecMime();
   let rec: MediaRecorder;
   try {
     rec = new MediaRecorder(state.micStream, mime ? { mimeType: mime } : undefined);
   } catch {
-    setStatus('当前浏览器不支持录音');
+    setStatus(t('rec.unsupported'));
     state.recordArmed = false;            // disarm: it will never work here
     updateRecordBtn();
     return;
@@ -2217,7 +2245,7 @@ function beginRecording(): void {
       };
       state.takes.unshift(take);       // newest on top
       refreshTakes();
-      setStatus(`录好了 ${fmtDuration(take.seconds)},在下面可以直接播放`);
+      setStatus(t('rec.saved', { dur: fmtDuration(take.seconds) }));
     }
     // 重来 ends a run, not the recording session: if the switch is still on
     // and the mic is live, roll straight into the next take.
@@ -2227,7 +2255,7 @@ function beginRecording(): void {
   state.recElapsed = 0;
   state.recStartedAt = performance.now();
   state.recording = true;
-  setStatus('录音中…');
+  setStatus(t('rec.recording'));
 }
 
 // Fold the running segment into the total and stop the clock. Paused time
@@ -2272,16 +2300,16 @@ function refreshTakes(): void {
   if (!state.takes.length) { el.innerHTML = ''; return; }
 
   el.innerHTML =
-    `<div class="takes-head"><span class="sp-title">本次录音</span>` +
-    `<button class="rt-mini-btn" type="button" data-clear-takes>清空</button></div>` +
-    state.takes.map(t => {
+    `<div class="takes-head"><span class="sp-title">${t('rec.title')}</span>` +
+    `<button class="rt-mini-btn" type="button" data-clear-takes>${t('rec.clear')}</button></div>` +
+    state.takes.map(take => {
       // Duration is already in the player's own readout — show only the clock.
-      const time = `${pad2(t.at.getHours())}:${pad2(t.at.getMinutes())}`;
-      return `<div class="take" data-take="${t.id}">` +
-        `<audio class="take-audio" controls preload="metadata" src="${t.url}"></audio>` +
+      const time = `${pad2(take.at.getHours())}:${pad2(take.at.getMinutes())}`;
+      return `<div class="take" data-take="${take.id}">` +
+        `<audio class="take-audio" controls preload="metadata" src="${take.url}"></audio>` +
         `<span class="take-meta">${time}</span>` +
-        `<button class="take-btn" type="button" data-dl="${t.id}" title="下载这段录音" aria-label="下载">⬇</button>` +
-        `<button class="take-btn" type="button" data-del="${t.id}" title="删掉这段录音" aria-label="删除">✕</button>` +
+        `<button class="take-btn" type="button" data-dl="${take.id}" title="${t('rec.download')}" aria-label="${t('rec.downloadAria')}">⬇</button>` +
+        `<button class="take-btn" type="button" data-del="${take.id}" title="${t('rec.delete')}" aria-label="${t('rec.deleteAria')}">✕</button>` +
       `</div>`;
     }).join('');
 }
@@ -2308,10 +2336,10 @@ async function calibrateLatency(): Promise<void> {
   await ensureCtx();
   if (!state.running) await start();
   const ctx = state.ctx, analyser = state.analyser, buffer = state.buffer;
-  if (!ctx || !analyser || !buffer) { setStatus('校准失败:麦克风未就绪'); return; }
+  if (!ctx || !analyser || !buffer) { setStatus(t('cal.micNotReady')); return; }
 
   state.calibrating = true;
-  setStatus('校准中…请保持安静,让节拍声能被麦克风听到');
+  setStatus(t('cal.running'));
 
   const clicks = 8, gap = 0.7;
   const t0 = ctx.currentTime + 0.5;
@@ -2336,13 +2364,13 @@ async function calibrateLatency(): Promise<void> {
     if (best > 0.02) delays.push(bestT - ct);
   }
   if (delays.length < 3) {
-    setStatus('没听到节拍声:请调大音量、或让麦克风离音箱近一点再试');
+    setStatus(t('cal.noClick'));
     return;
   }
   delays.sort((a, b) => a - b);
   state.micLatency = Math.max(0, Math.min(0.4, delays[Math.floor(delays.length / 2)]));
   saveSettings();
-  setStatus(`已校准:麦克风延迟约 ${Math.round(state.micLatency * 1000)}ms`);
+  setStatus(t('cal.done', { ms: Math.round(state.micLatency * 1000) }));
 }
 
 // Fullscreen with webkit fallbacks (older macOS Safari exposes only the
@@ -2362,11 +2390,11 @@ function toggleFullscreen(): void {
     if (document.exitFullscreen) document.exitFullscreen().catch(() => { /* ignore */ });
     else doc.webkitExitFullscreen?.();
   } else if (wrap.requestFullscreen) {
-    wrap.requestFullscreen().catch(() => setStatus('当前浏览器不支持全屏'));
+    wrap.requestFullscreen().catch(() => setStatus(t('status.noFullscreen')));
   } else if (wrap.webkitRequestFullscreen) {
     wrap.webkitRequestFullscreen();
   } else {
-    setStatus('当前浏览器不支持全屏');
+    setStatus(t('status.noFullscreen'));
   }
 }
 

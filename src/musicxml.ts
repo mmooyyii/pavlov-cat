@@ -1,4 +1,5 @@
 import { midiToNoteName, type TargetTrack, type TargetNote } from './music';
+import { t } from './i18n';
 
 // Minimal MusicXML reader for follow-along practice. Parses the common
 // `score-partwise` layout with the browser's built-in DOMParser (no deps).
@@ -17,10 +18,10 @@ function midiFromPitch(pitch: Element): number {
 
 export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTrack {
   const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('文件解析失败:不是有效的 MusicXML');
+  if (doc.querySelector('parsererror')) throw new Error(t('err.xmlInvalid'));
 
   const part = doc.querySelector('score-partwise part') ?? doc.querySelector('part');
-  if (!part) throw new Error('乐谱里没有找到声部(part)');
+  if (!part) throw new Error(t('err.xmlNoPart'));
 
   let divisions = 1;          // ticks per quarter note (= per beat here)
   let bpm: number | null = null;
@@ -80,7 +81,7 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
     }
   }
 
-  if (!notes.length) throw new Error('乐谱里没有可练习的音符');
+  if (!notes.length) throw new Error(t('err.xmlNoNotes'));
   const title = (doc.querySelector('work-title,movement-title')?.textContent
     ?? fallbackTitle).trim() || fallbackTitle;
   return { notes, totalBeats: pos, title, bpm };
