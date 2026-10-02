@@ -11,6 +11,7 @@ import { parseMusicXml } from './musicxml';
 import { scoresAll, scoresPut, scoresReplace, scoresDelete, type ScoreEntry } from './library';
 import { readMxl } from './mxl';
 import { sampleEntries, SAMPLE_DIR } from './samples';
+import { Staff } from './staff';
 import { t, applyI18n, onLangChange, setLang, getLang, LANGS, type Lang, type MsgKey } from './i18n';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -181,6 +182,10 @@ const state = {
   library: [] as ScoreEntry[],          // imported scores, sorted by title
   scoreId: null as string | null,       // library id of the active score
   collapsedDirs: new Set<string>(),     // folded folders in the library tree
+  staff: null as Staff | null,          // engraved score above the timeline
+  staffXml: null as string | null,      // what the staff currently shows
+  staffShown: false,
+  staffOffset: 0,                       // trimmed lead-in beats: timeline → written score
 
   // Reference drone (sustained tone to tune against)
   drone: null as Drone | null,
@@ -233,6 +238,7 @@ const state = {
 
   els: null as null | {
     canvas: HTMLCanvasElement;
+    staffEl: HTMLElement;
     wrap: HTMLElement;
     bpmInput: HTMLInputElement;
     accentInput: HTMLInputElement;
@@ -915,6 +921,7 @@ function selectScore(id: string | null, { rewind = true } = {}): void {
   refreshScoreUi();
   saveSettings();
   if (rewind) clearData();     // play the new piece from the top
+  void refreshStaff();
   drawOnce();
 }
 
@@ -925,6 +932,7 @@ async function openScore(id: string, { rewind = true } = {}): Promise<void> {
   const entry = state.library.find(e => e.id === id);
   if (!entry) return;
   if (!entry.track && !(await loadTrack(entry))) return;
+  await scoreXml(entry, true);   // the click is what lets us ask for file access
   selectScore(id, { rewind });
 }
 
@@ -944,7 +952,9 @@ async function loadTrack(entry: ScoreEntry): Promise<boolean> {
     return false;
   }
   try {
-    entry.track = parseMusicXml(await scoreTextOf(file), entry.title);
+    const text = await scoreTextOf(file);
+    entry.track = parseMusicXml(text, entry.title);
+    entry.xml = text;
   } catch (e) {
     setStatus(`${entry.title}: ${e instanceof Error ? e.message : t('err.xmlInvalid')}`, true);
     return false;
@@ -1028,8 +1038,9 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
   const failed: string[] = [];
   for (const file of candidates) {
     try {
-      const track = parseMusicXml(await scoreTextOf(file), file.name.replace(/\.[^.]+$/, ''));
-      entries.push({ id: scoreIdOf(file), title: track.title, track, addedAt: Date.now() });
+      const xml = await scoreTextOf(file);
+      const track = parseMusicXml(xml, file.name.replace(/\.[^.]+$/, ''));
+      entries.push({ id: scoreIdOf(file), title: track.title, track, xml, addedAt: Date.now() });
     } catch {
       failed.push(file.name);
     }
@@ -1101,6 +1112,55 @@ async function initLibrary(): Promise<void> {
     ?? null;
   // Boot-time restore: don't rewind, the session hasn't started yet.
   selectScore(pick, { rewind: false });
+}
+
+// ── Staff ────────────────────────────────────────────────────────────────────
+// The MusicXML behind a library entry. Imports made before the staff existed
+// only kept the parsed notes; folder-indexed ones can be re-read from their
+// file handle (asking for access only when the user clicked), and the text is
+// then cached on the entry.
+async function scoreXml(entry: ScoreEntry, interactive: boolean): Promise<string | null> {
+  if (entry.xml) return entry.xml;
+  const h = entry.handle as ReadableHandle | undefined;
+  if (!h) return null;
+  if (h.queryPermission && (await h.queryPermission({ mode: 'read' })) !== 'granted') {
+    if (!interactive || (await h.requestPermission?.({ mode: 'read' })) !== 'granted') return null;
+  }
+  try {
+    entry.xml = await scoreTextOf(await h.getFile());
+  } catch { return null; }
+  if (!entry.builtin) void scoresPut([entry]).catch(() => { /* cache is best-effort */ });
+  return entry.xml;
+}
+
+function setStaffShown(on: boolean): void {
+  state.staffShown = on;
+  if (!state.els) return;
+  state.els.staffEl.classList.toggle('hidden', !on);
+  state.els.wrap.classList.toggle('has-staff', on);
+  state.els.wrap.style.setProperty('--staff-h', `${on ? state.els.staffEl.offsetHeight : 0}px`);
+  resizeCanvas();
+}
+
+// Show the active score's staff in score mode, hide it otherwise. Re-renders
+// only when the score itself changed — switching tabs just toggles visibility.
+async function refreshStaff(): Promise<void> {
+  if (!state.els) return;
+  const entry = state.refMode === 'score' ? state.library.find(e => e.id === state.scoreId) : undefined;
+  if (!entry) { setStaffShown(false); return; }
+  const xml = await scoreXml(entry, false);
+  if (entry.id !== state.scoreId || state.refMode !== 'score') return;
+  if (xml === state.staffXml) { setStaffShown(xml != null); return; }
+  state.staffXml = xml;
+  state.staffOffset = 0;
+  if (xml) {
+    try { state.staffOffset = parseMusicXml(xml, entry.title).offsetBeats ?? 0; } catch { /* */ }
+  }
+  setStaffShown(xml != null);    // visible before rendering: OSMD lays out to the box width
+  state.staff ??= new Staff(state.els.staffEl);
+  const ok = await state.staff.load(xml);
+  if (state.staffXml === xml) setStaffShown(ok);   // again: the box now has the line's real height
+  drawOnce();
 }
 
 // ── Microphone device picker ────────────────────────────────────────────────
@@ -1369,6 +1429,11 @@ function drawOnce(): void {
   const playheadX = leftMargin + (W - leftMargin) * PLAYHEAD_RATIO;
   const pxPerBeat = (W - playheadX - 10 * scale) / (state.visibleBeats - state.visibleBeats * PLAYHEAD_RATIO);
   state.lastPxPerBeat = pxPerBeat;
+  // The staff's cursor lines up with the playhead, so the eye can drop
+  // straight from the written note to the pitch trace below it.
+  if (state.staffShown && state.track) {
+    state.staff?.follow(elapsedBeats - SCORE_LEADIN_BEATS + state.staffOffset, playheadX);
+  }
 
   const topY = Math.round(24 * scale);
   const bottomY = H - Math.round(28 * scale);
@@ -2002,6 +2067,7 @@ function updateModeUi(): void {
   state.els.temperamentRow.classList.toggle('hidden', state.refMode !== 'scale');
   state.els.rangeRow.classList.toggle('hidden', state.refMode === 'score');
   state.els.scoreGroup.classList.toggle('hidden', state.refMode !== 'score');
+  void refreshStaff();
 }
 
 // Entering the tuner starts the mic automatically so a beginner just sees a
@@ -2117,6 +2183,7 @@ export function initRealtime(): void {
 
   state.els = {
     canvas: document.getElementById('realtime-canvas') as HTMLCanvasElement,
+    staffEl: document.getElementById('rt-staff') as HTMLElement,
     wrap: document.getElementById('rt-canvas-wrap') as HTMLElement,
     bpmInput: document.getElementById('rt-bpm') as HTMLInputElement,
     accentInput: document.getElementById('rt-accent') as HTMLInputElement,
@@ -2790,9 +2857,10 @@ function toggleFullscreen(): void {
 function resizeCanvas(): void {
   if (!state.els) return;
   const c = state.els.canvas;
-  const wrap = state.els.wrap;
-  const w = Math.max(320, wrap.clientWidth);
-  const h = Math.max(320, wrap.clientHeight);
+  // The canvas box, not the stage: in score mode the staff takes the top.
+  const w = c.clientWidth;
+  const h = c.clientHeight;
+  if (w <= 0 || h <= 0) return;   // hidden (tuner tab) — keep the last size
   if (c.width !== w || c.height !== h) {
     c.width = w;
     c.height = h;

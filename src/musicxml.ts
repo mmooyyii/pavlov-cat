@@ -95,5 +95,5 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
   for (const n of notes) n.startBeat -= lead;
   const title = (doc.querySelector('work-title,movement-title')?.textContent
     ?? fallbackTitle).trim() || fallbackTitle;
-  return { notes, totalBeats: pos - lead, title, bpm };
+  return { notes, totalBeats: pos - lead, title, bpm, offsetBeats: lead };
 }

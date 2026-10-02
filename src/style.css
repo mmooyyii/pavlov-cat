@@ -558,6 +558,8 @@ input[type='number']:focus {
 /* ── Scope stage (QuickTime-style dark canvas) ──────────────────────────── */
 .rt-canvas-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   background: #1c1c1e;
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -570,10 +572,32 @@ input[type='number']:focus {
 
 #realtime-canvas {
   width: 100%;
-  height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   display: block;
   background: #1c1c1e;
 }
+
+/* Engraved staff on top of the timeline (score mode). Its height follows the
+   rendered line (ledger lines included); --staff-h is set from script so the
+   overlay buttons can clear it. */
+.rt-canvas-wrap { --staff-h: 0px; }
+.rt-canvas-wrap.has-staff {
+  height: calc(60vh + var(--staff-h));
+  max-height: 920px;
+}
+.rt-staff {
+  flex: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 0 8px;
+  background: #1c1c1e;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+.rt-staff::-webkit-scrollbar { display: none; }
+.rt-canvas-wrap.has-staff .rt-canvas-actions,
+.rt-canvas-wrap.has-staff .rt-fullscreen-btn { top: calc(var(--staff-h) + 10px); }
 
 /* Frosted dark overlay controls */
 .rt-canvas-actions {
@@ -942,6 +966,8 @@ input[type='number']:focus {
 }
 .rt-canvas-wrap:fullscreen .rt-fullscreen-btn { top: 14px; right: 14px; }
 .rt-canvas-wrap:fullscreen .rt-canvas-actions { top: 14px; left: 14px; }
+.rt-canvas-wrap.has-staff:fullscreen .rt-canvas-actions,
+.rt-canvas-wrap.has-staff:fullscreen .rt-fullscreen-btn { top: calc(var(--staff-h) + 14px); }
 
 .rt-canvas-wrap:-webkit-full-screen {
   height: 100vh;
@@ -951,6 +977,8 @@ input[type='number']:focus {
 }
 .rt-canvas-wrap:-webkit-full-screen .rt-fullscreen-btn { top: 14px; right: 14px; }
 .rt-canvas-wrap:-webkit-full-screen .rt-canvas-actions { top: 14px; left: 14px; }
+.rt-canvas-wrap.has-staff:-webkit-full-screen .rt-canvas-actions,
+.rt-canvas-wrap.has-staff:-webkit-full-screen .rt-fullscreen-btn { top: calc(var(--staff-h) + 14px); }
 
 /* ── Gentle entrance ────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: no-preference) {

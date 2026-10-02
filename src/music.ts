@@ -161,4 +161,5 @@ export interface TargetTrack {
   totalBeats: number;
   title: string;
   bpm: number | null;   // score-declared tempo, if any
+  offsetBeats?: number; // leading rest beats trimmed off — maps back to the written score
 }
