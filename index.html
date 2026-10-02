@@ -101,6 +101,16 @@
           <button id="rt-settings-btn" class="rt-gear-btn" type="button" data-i18n-title="tb.settings" data-i18n-aria="tb.settings" title="更多设置" aria-label="更多设置">⚙</button>
 
           <div id="rt-settings-panel" class="settings-panel hidden">
+            <div class="sp-group hidden" id="rt-score-group">
+              <div class="sp-title" data-i18n="set.score">跟乐谱</div>
+              <div class="sp-row">
+                <span class="sp-label" data-i18n="set.wait">等我拉对再走</span>
+                <div class="toggle-group" id="rt-wait-toggles" data-i18n-title="set.waitTitle" title="开:走到每个音时停下来等,拉准了才往下走,适合刚开始读一首新曲子。关:跟着节拍走。">
+                  <button class="toggle" data-value="on" data-i18n="common.on">开</button>
+                  <button class="toggle active" data-value="off" data-i18n="common.off">关</button>
+                </div>
+              </div>
+            </div>
             <div class="sp-group">
               <div class="sp-title" data-i18n="set.metronome">节拍器</div>
               <div class="sp-row">

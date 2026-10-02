@@ -154,7 +154,11 @@ const state = {
 
   running: false,
   viewMode: 'practice' as ViewMode,
-  startTime: 0,                         // ctx.currentTime when started
+  startTime: 0,                         // clockNow() when started
+  heldTotal: 0,                         // seconds the transport has stood still (wait mode)
+  waitMode: false,                      // score: hold each note until it's played in tune
+  waitIdx: 0,                           // next score note wait mode is waiting for
+  waitRun: 0,                           // consecutive in-tune frames on that note
   frozenElapsedBeats: 0,                // last elapsedBeats when stopped (for static display)
   bpm: 80,
   timeUnit: 'beat' as TimeUnit,
@@ -256,6 +260,8 @@ const state = {
     metronomeToggles: NodeListOf<HTMLButtonElement>;
     recordToggles: NodeListOf<HTMLButtonElement>;
     judgeToggles: NodeListOf<HTMLButtonElement>;
+    waitToggles: NodeListOf<HTMLButtonElement>;
+    scoreGroup: HTMLElement;
     unitToggles: NodeListOf<HTMLButtonElement>;
     droneToggles: NodeListOf<HTMLButtonElement>;
     droneRootSelect: HTMLSelectElement;
@@ -313,6 +319,7 @@ function loadSettings(): void {
   if (typeof data.timeUnit === 'string' && TIME_UNITS.includes(data.timeUnit as TimeUnit)) state.timeUnit = data.timeUnit as TimeUnit;
   if (typeof data.metronomeOn === 'boolean') state.metronomeOn = data.metronomeOn;
   if (typeof data.pitchJudge === 'boolean') state.pitchJudge = data.pitchJudge;
+  if (typeof data.waitMode === 'boolean') state.waitMode = data.waitMode;
   if ('loMidi' in data) state.loMidi = clampInt(data.loMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.loMidi);
   if ('hiMidi' in data) state.hiMidi = clampInt(data.hiMidi, PICKER_MIN_MIDI, PICKER_MAX_MIDI, state.hiMidi);
   if (state.loMidi > state.hiMidi) [state.loMidi, state.hiMidi] = [state.hiMidi, state.loMidi];
@@ -353,6 +360,7 @@ function saveSettings(): void {
       timeUnit: state.timeUnit,
       metronomeOn: state.metronomeOn,
       pitchJudge: state.pitchJudge,
+      waitMode: state.waitMode,
       loMidi: state.loMidi,
       hiMidi: state.hiMidi,
       droneMode: state.droneMode,
@@ -406,13 +414,22 @@ function histForEach(cb: (t: number, f: number, v: number) => void): void {
 // at runStartBeat − N and climbs to runStartBeat as the empty beats tick by.
 function rawBeat(): number {
   if (!state.ctx) return 0;
-  return (state.ctx.currentTime - state.startTime) / (60 / state.bpm);
+  return (clockNow() - state.startTime) / (60 / state.bpm);
+}
+
+// Transport time: the audio clock minus every moment wait mode held the music.
+// All timeline math (startTime, history, metronome) runs on this clock; only
+// the final audio scheduling adds heldTotal back.
+function clockNow(): number {
+  return state.ctx ? state.ctx.currentTime - state.heldTotal : 0;
 }
 
 // What everything else should treat as "now". Clamping to runStartBeat is what
 // keeps the playhead parked during the count-in instead of rewinding.
 function currentBeat(): number {
-  return Math.max(state.runStartBeat, rawBeat());
+  const b = Math.max(state.runStartBeat, rawBeat());
+  const hold = waitHoldBeat();
+  return hold == null ? b : Math.min(b, Math.max(hold, state.runStartBeat));
 }
 
 /** Beats left in the count-in; 0 once the run is properly under way. */
@@ -421,19 +438,71 @@ function countInLeft(): number {
   return Math.max(0, state.runStartBeat - rawBeat());
 }
 
+// ── Wait mode ───────────────────────────────────────────────────────────────
+// Follow-along without the clock: the playhead stops at the start of each
+// score note until that note has been heard in tune, then moves on. On time,
+// nothing changes — the hold only engages when you're late or searching.
+// Rests aren't notes, so the clock runs through them as usual.
+const WAIT_HIT_FRAMES = 3;          // ~50ms of the right pitch counts as playing it
+const WAIT_EARLY_BEATS = 1;         // a note can be "caught" up to a beat early
+
+const waitActive = (): boolean => state.waitMode && scoreModeActive();
+
+/** Beat (timeline, incl. lead-in) the playhead may not pass, or null. */
+function waitHoldBeat(): number | null {
+  if (!waitActive()) return null;
+  const n = state.track!.notes[state.waitIdx];
+  return n ? n.startBeat + SCORE_LEADIN_BEATS : null;
+}
+
+// Point waitIdx at the first note not yet behind the given timeline beat —
+// used when resuming from somewhere other than the top.
+function syncWait(beat: number): void {
+  state.waitRun = 0;
+  if (!state.track) { state.waitIdx = 0; return; }
+  const b = beat - SCORE_LEADIN_BEATS;
+  const i = state.track.notes.findIndex(n => n.startBeat >= b - 1e-6);
+  state.waitIdx = i < 0 ? state.track.notes.length : i;
+}
+
+function waitStep(f: number): void {
+  if (!waitActive() || !state.ctx) return;
+  const notes = state.track!.notes;
+  const n = notes[state.waitIdx];
+  if (!n) return;
+  const ok = f > 0 && Math.abs(1200 * Math.log2(f / midiToFreq(n.midi))) <= state.centsToleranceMed;
+  state.waitRun = ok ? state.waitRun + 1 : 0;
+  const sb = rawBeat() - SCORE_LEADIN_BEATS;
+  const prev = notes[state.waitIdx - 1];
+  const open = Math.max(prev ? prev.startBeat : -Infinity, n.startBeat - WAIT_EARLY_BEATS);
+  if (state.waitRun >= WAIT_HIT_FRAMES && sb >= open) {
+    state.waitIdx++;
+    state.waitRun = 0;
+    return;
+  }
+  // Not played yet and the clock has reached it: stop the transport here.
+  if (sb > n.startBeat) {
+    const spb = 60 / state.bpm;
+    state.heldTotal = state.ctx.currentTime - state.startTime - (n.startBeat + SCORE_LEADIN_BEATS) * spb;
+  }
+}
+
 // ── Metronome ──────────────────────────────────────────────────────────────
 function scheduleMetronome(): void {
   if (!state.ctx) return;
   const ctx = state.ctx;
   const secsPerBeat = 60 / state.bpm;
-  while (state.nextTickTime < ctx.currentTime + LOOKAHEAD_S) {
+  const hold = waitHoldBeat();
+  while (state.nextTickTime < clockNow() + LOOKAHEAD_S) {
+    if (hold != null && state.nextTickBeat > hold) break;   // the music is waiting for you
     // Count-in beats always click, even with the metronome switched off —
     // a silent count-in would count you in on nothing.
     const isCountIn = state.nextTickBeat < state.runStartBeat;
     if (state.metronomeOn || isCountIn) {
       const isAccent = state.nextTickBeat % state.accentEvery === 0;
-      if (isAccent) playSnare(ctx, state.nextTickTime);
-      else playSound(ctx, state.nextTickTime, state.soundKind);
+      const when = state.nextTickTime + state.heldTotal;
+      if (isAccent) playSnare(ctx, when);
+      else playSound(ctx, when, state.soundKind);
     }
     state.nextTickTime += secsPerBeat;
     state.nextTickBeat++;
@@ -645,7 +714,9 @@ async function start(): Promise<void> {
   // nothing moves on screen until the count-in is done.
   const spb = 60 / state.bpm;
   state.runStartBeat = 0;
-  state.startTime = ctx.currentTime + 0.1 + state.countInBeats * spb;
+  state.startTime = clockNow() + 0.1 + state.countInBeats * spb;
+  state.waitIdx = 0;
+  state.waitRun = 0;
   state.nextTickBeat = -state.countInBeats;
   state.nextTickTime = state.startTime + state.nextTickBeat * spb;
   state.viewOffsetBeats = 0;
@@ -1123,15 +1194,16 @@ async function resume(): Promise<void> {
   // than replaying music you already played.
   state.runStartBeat = state.frozenElapsedBeats;
   const from = state.frozenElapsedBeats - state.countInBeats;
-  state.startTime = state.ctx.currentTime - from * spb;
+  state.startTime = clockNow() - from * spb;
+  syncWait(state.frozenElapsedBeats);
   state.viewOffsetBeats = 0;
   // Next tick = first whole beat after the resume point, but never in the past
   // (otherwise scheduleMetronome would burst-fire all missed beats at once).
   const nextBeat = Math.floor(from) + 1;
   state.nextTickBeat = nextBeat;
   state.nextTickTime = state.startTime + nextBeat * spb;
-  if (state.nextTickTime < state.ctx.currentTime + 0.05) {
-    state.nextTickTime = state.ctx.currentTime + 0.05;
+  if (state.nextTickTime < clockNow() + 0.05) {
+    state.nextTickTime = clockNow() + 0.05;
   }
   state.running = true;
 
@@ -1152,11 +1224,13 @@ async function resume(): Promise<void> {
 function clearData(): void {
   if (state.recording) { try { state.recorder?.stop(); } catch { /* */ } }
   histClear();
+  state.waitIdx = 0;
+  state.waitRun = 0;
   state.frozenElapsedBeats = 0;
   state.viewOffsetBeats = 0;
   if (state.ctx) {
     const spb = 60 / state.bpm;
-    state.startTime = state.ctx.currentTime;
+    state.startTime = clockNow();
     state.nextTickBeat = 0;
     state.nextTickTime = state.startTime + spb;
   }
@@ -1227,7 +1301,10 @@ function detectStep(): void {
   }
   // During a count-in the clock is parked, so anything captured now would pile
   // up on a single beat — tick the metronome but don't record the trail.
-  if (countInLeft() <= 0) histPush(state.ctx.currentTime, f, rms);
+  if (countInLeft() <= 0) {
+    waitStep(f);
+    histPush(clockNow(), f, rms);
+  }
   scheduleMetronome();
 }
 
@@ -1663,6 +1740,7 @@ function computeReport(): SessionReport | null {
 function computeRhythm(): { errorsMs: number[]; onTimeMs: number } | null {
   const scoreMode = scoreModeActive();
   if (!scoreMode && !state.metronomeOn) return null;
+  if (waitActive()) return null;   // the music waited for you — there's no pulse to be on
   const spb = 60 / state.bpm;
 
   const onsets: number[] = [];
@@ -1923,6 +2001,7 @@ function updateModeUi(): void {
   if (state.refMode !== 'score') toggleScorePanel(false);   // don't reopen on return
   state.els.temperamentRow.classList.toggle('hidden', state.refMode !== 'scale');
   state.els.rangeRow.classList.toggle('hidden', state.refMode === 'score');
+  state.els.scoreGroup.classList.toggle('hidden', state.refMode !== 'score');
 }
 
 // Entering the tuner starts the mic automatically so a beginner just sees a
@@ -1953,10 +2032,10 @@ function selectMode(tab: TabMode): void {
       // Continue from where the practice clock was frozen (same math as
       // resume()). A fresh session started in the tuner has frozen=0 → begin at
       // beat 0 so the first metronome accent isn't skipped.
-      state.startTime = state.ctx.currentTime - state.frozenElapsedBeats * spb;
+      state.startTime = clockNow() - state.frozenElapsedBeats * spb;
       const nextBeat = state.frozenElapsedBeats <= 0 ? 0 : Math.floor(state.frozenElapsedBeats) + 1;
       state.nextTickBeat = nextBeat;
-      state.nextTickTime = Math.max(state.startTime + nextBeat * spb, state.ctx.currentTime + 0.05);
+      state.nextTickTime = Math.max(state.startTime + nextBeat * spb, clockNow() + 0.05);
     }
     state.viewMode = 'practice';
     if (state.refMode !== tab) {
@@ -2065,6 +2144,8 @@ export function initRealtime(): void {
     metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
     recordToggles: document.querySelectorAll<HTMLButtonElement>('#rt-record-toggles .toggle'),
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
+    waitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-wait-toggles .toggle'),
+    scoreGroup: document.getElementById('rt-score-group') as HTMLElement,
     unitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-unit-toggles .toggle'),
     droneToggles: document.querySelectorAll<HTMLButtonElement>('#rt-drone-toggles .toggle'),
     droneRootSelect: document.getElementById('rt-drone-root') as HTMLSelectElement,
@@ -2282,6 +2363,18 @@ export function initRealtime(): void {
       state.metronomeOn = btn.dataset.value === 'on';
       state.els!.metronomeToggles.forEach(b => b.classList.toggle('active', b === btn));
       saveSettings();
+    });
+  });
+
+  state.els.waitToggles.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.value === (state.waitMode ? 'on' : 'off'));
+    btn.addEventListener('click', () => {
+      state.waitMode = btn.dataset.value === 'on';
+      state.els!.waitToggles.forEach(b => b.classList.toggle('active', b === btn));
+      // Switching mid-run: wait for the next note ahead, not one already passed.
+      syncWait(state.running ? Math.max(state.runStartBeat, rawBeat()) : state.frozenElapsedBeats);
+      saveSettings();
+      drawOnce();
     });
   });
 
