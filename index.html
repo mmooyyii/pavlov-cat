@@ -76,18 +76,8 @@
             <input id="rt-bpm" type="number" min="40" max="220" step="1" value="80" />
           </div>
           <div class="rt-control">
-            <span class="config-label" data-i18n="tb.metronome">节拍器</span>
-            <div class="toggle-group" id="rt-metronome-toggles">
-              <button class="toggle" data-value="on" data-i18n="common.on">开</button>
-              <button class="toggle active" data-value="off" data-i18n="common.off">关</button>
-            </div>
-          </div>
-          <div class="rt-control">
-            <span class="config-label" data-i18n="tb.record">录音</span>
-            <div class="toggle-group" id="rt-record-toggles" data-i18n-title="tb.recordTitle" title="开着就录下你拉的每一遍;点「↺ 重来」存下这一遍并接着录下一遍,录好的在下面直接回放">
-              <button class="toggle" data-value="on" data-i18n="common.on">开</button>
-              <button class="toggle active" data-value="off" data-i18n="common.off">关</button>
-            </div>
+            <button class="chip" id="rt-metronome-chip" type="button" aria-pressed="false"><span class="chip-dot" aria-hidden="true"></span><span data-i18n="tb.metronome">节拍器</span></button>
+            <button class="chip chip-rec" id="rt-record-chip" type="button" aria-pressed="false" data-i18n-title="tb.recordTitle" title="开着就录下你拉的每一遍;点「↺ 重来」存下这一遍并接着录下一遍,录好的在下面直接回放"><span class="chip-dot" aria-hidden="true"></span><span data-i18n="tb.record">录音</span></button>
           </div>
           <div class="rt-control">
             <span class="config-label" data-i18n="tb.drone">参考音</span>
@@ -222,7 +212,7 @@
           </div>
         </div>
         <div class="rt-canvas-wrap" id="rt-canvas-wrap">
-          <div id="rt-staff" class="rt-staff hidden"></div>
+          <div id="rt-staff-box" class="rt-staff-box hidden"><div id="rt-staff" class="rt-staff"></div></div>
           <canvas id="realtime-canvas"></canvas>
           <div class="rt-canvas-actions">
             <button id="rt-start" class="rt-overlay-btn rt-overlay-btn-primary" data-i18n="btn.start">▶ 开始</button>

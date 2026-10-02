@@ -162,4 +162,6 @@ export interface TargetTrack {
   title: string;
   bpm: number | null;   // score-declared tempo, if any
   offsetBeats?: number; // leading rest beats trimmed off — maps back to the written score
+  bars?: number[];      // beat each bar starts on (after the trim), for accents
+  beatsPerBar?: number; // from the first time signature, in quarter beats
 }

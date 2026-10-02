@@ -215,7 +215,8 @@ const state = {
   // Pan when stopped: displayed elapsed = frozenElapsedBeats + viewOffsetBeats.
   // Clamped so the playhead stays inside [0, frozenElapsedBeats].
   viewOffsetBeats: 0,
-  lastPxPerBeat: 0,                     // stashed by drawOnce for pointer handler
+  lastPxPerBeat: 0,                     // stashed by drawOnce for pointer handler (CSS px)
+  dpr: 1,                               // canvas bitmap pixels per CSS pixel
   refreshPanCursor: null as null | (() => void),
 
   // Metronome scheduling
@@ -263,8 +264,9 @@ const state = {
     scoreTree: HTMLElement;
     settingsBtn: HTMLButtonElement;
     settingsPanel: HTMLElement;
-    metronomeToggles: NodeListOf<HTMLButtonElement>;
-    recordToggles: NodeListOf<HTMLButtonElement>;
+    metronomeChip: HTMLButtonElement;
+    recordChip: HTMLButtonElement;
+    staffBox: HTMLElement;
     judgeToggles: NodeListOf<HTMLButtonElement>;
     waitToggles: NodeListOf<HTMLButtonElement>;
     scoreGroup: HTMLElement;
@@ -493,6 +495,31 @@ function waitStep(f: number): void {
   }
 }
 
+// ── Bars ────────────────────────────────────────────────────────────────────
+// Where the accents go. A score brings its own bars (3/4, a pickup bar…); the
+// scale tab and older cached scores use the "每 N 拍重音" setting.
+const barSets = new WeakMap<TargetTrack, Set<number>>();
+const beatKey = (b: number): number => Math.round(b * 1000);
+
+function barLength(): number {
+  const tr = scoreModeActive() ? state.track : null;
+  return tr?.bars?.length && tr.beatsPerBar ? tr.beatsPerBar : state.accentEvery;
+}
+
+/** Is timeline beat `b` (lead-in included) the first beat of a bar? */
+function isBarStart(b: number): boolean {
+  const tr = scoreModeActive() ? state.track : null;
+  if (!tr?.bars?.length) return b % state.accentEvery === 0;
+  const s = b - SCORE_LEADIN_BEATS;
+  if (s < 0) {   // lead-in / count-in: whole bars counted back from the first one
+    const per = barLength();
+    return Math.abs(((s % per) + per) % per) < 1e-6;
+  }
+  let set = barSets.get(tr);
+  if (!set) { set = new Set(tr.bars.map(beatKey)); barSets.set(tr, set); }
+  return set.has(beatKey(s));
+}
+
 // ── Metronome ──────────────────────────────────────────────────────────────
 function scheduleMetronome(): void {
   if (!state.ctx) return;
@@ -505,7 +532,7 @@ function scheduleMetronome(): void {
     // a silent count-in would count you in on nothing.
     const isCountIn = state.nextTickBeat < state.runStartBeat;
     if (state.metronomeOn || isCountIn) {
-      const isAccent = state.nextTickBeat % state.accentEvery === 0;
+      const isAccent = isBarStart(state.nextTickBeat);
       const when = state.nextTickTime + state.heldTotal;
       if (isAccent) playSnare(ctx, when);
       else playSound(ctx, when, state.soundKind);
@@ -1133,12 +1160,14 @@ async function scoreXml(entry: ScoreEntry, interactive: boolean): Promise<string
   return entry.xml;
 }
 
+const staffZoom = (): number => (fullscreenElement() ? 1.15 : 0.8);
+
 function setStaffShown(on: boolean): void {
   state.staffShown = on;
   if (!state.els) return;
-  state.els.staffEl.classList.toggle('hidden', !on);
+  state.els.staffBox.classList.toggle('hidden', !on);
   state.els.wrap.classList.toggle('has-staff', on);
-  state.els.wrap.style.setProperty('--staff-h', `${on ? state.els.staffEl.offsetHeight : 0}px`);
+  state.els.wrap.style.setProperty('--staff-h', `${on ? state.els.staffBox.offsetHeight : 0}px`);
   resizeCanvas();
 }
 
@@ -1154,10 +1183,19 @@ async function refreshStaff(): Promise<void> {
   state.staffXml = xml;
   state.staffOffset = 0;
   if (xml) {
-    try { state.staffOffset = parseMusicXml(xml, entry.title).offsetBeats ?? 0; } catch { /* */ }
+    try {
+      const parsed = parseMusicXml(xml, entry.title);
+      state.staffOffset = parsed.offsetBeats ?? 0;
+      // Scores cached before bars were parsed pick them up here.
+      if (entry.track && !entry.track.bars) {
+        entry.track.bars = parsed.bars;
+        entry.track.beatsPerBar = parsed.beatsPerBar;
+      }
+    } catch { /* */ }
   }
   setStaffShown(xml != null);    // visible before rendering: OSMD lays out to the box width
   state.staff ??= new Staff(state.els.staffEl);
+  state.staff.setZoom(staffZoom());
   const ok = await state.staff.load(xml);
   if (state.staffXml === xml) setStaffShown(ok);   // again: the box now has the line's real height
   drawOnce();
@@ -1422,17 +1460,20 @@ function drawOnce(): void {
   }
 
   // Scale layout pixel values so things look right on both 320px and 1080px canvases.
-  const scale = Math.max(1, Math.min(2.6, Math.min(W, H) / 480));
+  // The bitmap is device pixels (sharp on tablets); layout is sized in CSS
+  // pixels and multiplied back up.
+  const dpr = state.dpr;
+  const scale = dpr * Math.max(1, Math.min(1.8, Math.min(W, H) / dpr / 480));
   const fontSm = Math.round(11 * scale);
   const fontMd = Math.round(13 * scale);
   const leftMargin = Math.round(44 * scale);
   const playheadX = leftMargin + (W - leftMargin) * PLAYHEAD_RATIO;
   const pxPerBeat = (W - playheadX - 10 * scale) / (state.visibleBeats - state.visibleBeats * PLAYHEAD_RATIO);
-  state.lastPxPerBeat = pxPerBeat;
+  state.lastPxPerBeat = pxPerBeat / dpr;   // pointer handlers work in CSS px
   // The staff's cursor lines up with the playhead, so the eye can drop
   // straight from the written note to the pitch trace below it.
   if (state.staffShown && state.track) {
-    state.staff?.follow(elapsedBeats - SCORE_LEADIN_BEATS + state.staffOffset, playheadX);
+    state.staff?.follow(elapsedBeats - SCORE_LEADIN_BEATS + state.staffOffset, playheadX / dpr);
   }
 
   const topY = Math.round(24 * scale);
@@ -1485,16 +1526,23 @@ function drawOnce(): void {
   if (state.timeUnit === 'beat') {
     const firstBeat = Math.floor(elapsedBeats - state.visibleBeats * PLAYHEAD_RATIO);
     const lastBeat = Math.ceil(elapsedBeats + state.visibleBeats * (1 - PLAYHEAD_RATIO));
+    // Number only every Nth beat when they'd run into each other (narrow
+    // screens, 3-digit beats); bar lines are still drawn for every beat.
+    // Thinned labels fall on bar starts (multiples of the accent).
+    const need = Math.ceil((fontSm * 2.6) / pxPerBeat);
+    const acc = barLength();
+    const labelEvery = need <= 1 ? 1 : Math.ceil(need / acc) * acc;
     for (let b = firstBeat; b <= lastBeat; b++) {
       const x = beatToX(b);
       if (x < leftMargin || x > W) continue;
-      const isAccent = b >= 0 && b % state.accentEvery === 0;
+      const isAccent = b >= 0 && isBarStart(b);
       ctx2d.strokeStyle = isAccent ? PALETTE.gridAccent : PALETTE.gridRegular;
       ctx2d.lineWidth = isAccent ? 1.2 * scale : 1;
       ctx2d.beginPath();
       ctx2d.moveTo(x, topY);
       ctx2d.lineTo(x, bottomY);
       ctx2d.stroke();
+      if (labelEvery > 1 && !(labelEvery === acc ? isAccent : b % labelEvery === 0)) continue;
       ctx2d.fillStyle = isAccent ? PALETTE.labelAccent : PALETTE.labelRegular;
       ctx2d.fillText(`${b + 1}`, x + 2, bottomY + 4);
     }
@@ -1560,7 +1608,8 @@ function drawOnce(): void {
       }
       ctx2d.fill();
       ctx2d.stroke();
-      if (w > 22 * scale) {
+      // With the staff showing, the written notes already carry the names.
+      if (!state.staffShown && w > 22 * scale) {
         ctx2d.fillStyle = PALETTE.scoreLabel;
         ctx2d.fillText(n.name, left + 4, y);
       }
@@ -1940,7 +1989,7 @@ function setBpm(v: number): void {
 
 function setMetronome(on: boolean): void {
   state.metronomeOn = on;
-  state.els?.metronomeToggles.forEach(b => b.classList.toggle('active', (b.dataset.value === 'on') === on));
+  setChip(state.els?.metronomeChip, on);
   saveSettings();
 }
 
@@ -2208,8 +2257,9 @@ export function initRealtime(): void {
     scoreTree: document.getElementById('rt-score-tree') as HTMLElement,
     settingsBtn: document.getElementById('rt-settings-btn') as HTMLButtonElement,
     settingsPanel: document.getElementById('rt-settings-panel') as HTMLElement,
-    metronomeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-metronome-toggles .toggle'),
-    recordToggles: document.querySelectorAll<HTMLButtonElement>('#rt-record-toggles .toggle'),
+    metronomeChip: document.getElementById('rt-metronome-chip') as HTMLButtonElement,
+    recordChip: document.getElementById('rt-record-chip') as HTMLButtonElement,
+    staffBox: document.getElementById('rt-staff-box') as HTMLElement,
     judgeToggles: document.querySelectorAll<HTMLButtonElement>('#rt-judge-toggles .toggle'),
     waitToggles: document.querySelectorAll<HTMLButtonElement>('#rt-wait-toggles .toggle'),
     scoreGroup: document.getElementById('rt-score-group') as HTMLElement,
@@ -2424,14 +2474,8 @@ export function initRealtime(): void {
     saveSettings();
   });
 
-  state.els.metronomeToggles.forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.value === (state.metronomeOn ? 'on' : 'off'));
-    btn.addEventListener('click', () => {
-      state.metronomeOn = btn.dataset.value === 'on';
-      state.els!.metronomeToggles.forEach(b => b.classList.toggle('active', b === btn));
-      saveSettings();
-    });
-  });
+  setChip(state.els.metronomeChip, state.metronomeOn);
+  state.els.metronomeChip.addEventListener('click', () => setMetronome(!state.metronomeOn));
 
   state.els.waitToggles.forEach(btn => {
     btn.classList.toggle('active', btn.dataset.value === (state.waitMode ? 'on' : 'off'));
@@ -2503,12 +2547,7 @@ export function initRealtime(): void {
 
   state.els.startBtn.addEventListener('click', togglePlayPause);
   state.els.clearBtn.addEventListener('click', () => { void redo(); });
-  state.els.recordToggles.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const on = btn.dataset.value === 'on';
-      if (on !== state.recordArmed) setRecordArmed(on);
-    });
-  });
+  state.els.recordChip.addEventListener('click', () => setRecordArmed(!state.recordArmed));
 
   // The report's "next step" button.
   state.els.reportEl.addEventListener('click', (e) => {
@@ -2541,8 +2580,11 @@ export function initRealtime(): void {
 
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
-  document.addEventListener('fullscreenchange', resizeCanvas);
-  document.addEventListener('webkitfullscreenchange' as keyof DocumentEventMap, resizeCanvas);
+  // Catches every size change of the canvas itself — fullscreen, the staff
+  // appearing, rotation — whichever events a browser does or doesn't fire.
+  new ResizeObserver(() => resizeCanvas()).observe(state.els.canvas);
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange' as keyof DocumentEventMap, onFullscreenChange);
 
   // Fullscreen-only shortcuts: Space toggles play/pause (preserving the
   // trail), K clears the trail. Scoped to fullscreen so they don't hijack
@@ -2645,8 +2687,12 @@ function pickRecMime(): string {
 // The switch shows the *armed* state, not whether capture is running right
 // now: it stays on 开 across pauses, so resuming keeps recording.
 function updateRecordBtn(): void {
-  const want = state.recordArmed ? 'on' : 'off';
-  state.els?.recordToggles.forEach(b => b.classList.toggle('active', b.dataset.value === want));
+  setChip(state.els?.recordChip, state.recordArmed);
+}
+
+function setChip(chip: HTMLButtonElement | undefined, on: boolean): void {
+  chip?.classList.toggle('active', on);
+  chip?.setAttribute('aria-pressed', String(on));
 }
 
 // The 录音 switch is armed state, not a start button: turning it on while the
@@ -2838,6 +2884,14 @@ function fullscreenElement(): Element | null {
   return document.fullscreenElement ?? (document as WebkitDoc).webkitFullscreenElement ?? null;
 }
 
+function onFullscreenChange(): void {
+  if (state.staff && state.staffShown) {
+    state.staff.setZoom(staffZoom());
+    setStaffShown(true);   // the line's height changed with the zoom
+  }
+  resizeCanvas();
+}
+
 function toggleFullscreen(): void {
   if (!state.els) return;
   const doc = document as WebkitDoc;
@@ -2858,9 +2912,12 @@ function resizeCanvas(): void {
   if (!state.els) return;
   const c = state.els.canvas;
   // The canvas box, not the stage: in score mode the staff takes the top.
-  const w = c.clientWidth;
-  const h = c.clientHeight;
-  if (w <= 0 || h <= 0) return;   // hidden (tuner tab) — keep the last size
+  if (c.clientWidth <= 0 || c.clientHeight <= 0) return;   // hidden (tuner tab) — keep the last size
+  // Device pixels, capped at 2× — a 3× bitmap redrawn every frame is too
+  // much for a mid-range tablet, and 2× is already sharp at arm's length.
+  state.dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  const w = Math.round(c.clientWidth * state.dpr);
+  const h = Math.round(c.clientHeight * state.dpr);
   if (c.width !== w || c.height !== h) {
     c.width = w;
     c.height = h;

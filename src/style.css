@@ -279,6 +279,36 @@ header h1 {
 
 .toggle:not(.active):active { opacity: 0.5; }
 
+/* On/off chips: one tap toggles, lit when on (节拍器 / 录音) */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 980px;
+  background: var(--fill);
+  color: var(--secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.1s ease;
+}
+.chip:active { transform: scale(0.96); }
+.chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+}
+.chip.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.chip.active .chip-dot { opacity: 1; }
+.chip-rec.active { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+
 /* Number fields */
 #rt-bpm,
 #rt-accent,
@@ -578,24 +608,35 @@ input[type='number']:focus {
   background: #1c1c1e;
 }
 
-/* Engraved staff on top of the timeline (score mode). Its height follows the
-   rendered line (ledger lines included); --staff-h is set from script so the
-   overlay buttons can clear it. */
+/* Engraved staff on top of the timeline (score mode): a white strip of paper,
+   black ink. Its height follows the rendered line (ledger lines included);
+   --staff-h is set from script so the overlay buttons can clear it. */
 .rt-canvas-wrap { --staff-h: 0px; }
-.rt-canvas-wrap.has-staff {
-  height: calc(60vh + var(--staff-h));
-  max-height: 920px;
+.rt-canvas-wrap.has-staff { min-height: 480px; }
+.rt-staff-box {
+  position: relative;
+  flex: none;
+  background: #fff;
 }
 .rt-staff {
-  flex: none;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  padding: 0 8px;
-  background: #1c1c1e;
-  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 0 2px;
 }
 .rt-staff::-webkit-scrollbar { display: none; }
+/* Clef + key + time, pinned at the left once the line scrolls past them. */
+.rt-staff-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 6px 0 8px -6px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+.rt-staff-head svg { position: absolute; }
 .rt-canvas-wrap.has-staff .rt-canvas-actions,
 .rt-canvas-wrap.has-staff .rt-fullscreen-btn { top: calc(var(--staff-h) + 10px); }
 
@@ -603,7 +644,8 @@ input[type='number']:focus {
 .rt-canvas-actions {
   position: absolute;
   top: 10px;
-  left: 10px;
+  right: 50px;                   /* left of ⛶ — the left edge is the pitch axis */
+  justify-content: flex-end;
   display: flex;
   gap: 8px;
   z-index: 2;
@@ -965,7 +1007,7 @@ input[type='number']:focus {
   border-radius: 0;
 }
 .rt-canvas-wrap:fullscreen .rt-fullscreen-btn { top: 14px; right: 14px; }
-.rt-canvas-wrap:fullscreen .rt-canvas-actions { top: 14px; left: 14px; }
+.rt-canvas-wrap:fullscreen .rt-canvas-actions { top: 14px; right: 54px; }
 .rt-canvas-wrap.has-staff:fullscreen .rt-canvas-actions,
 .rt-canvas-wrap.has-staff:fullscreen .rt-fullscreen-btn { top: calc(var(--staff-h) + 14px); }
 
@@ -976,7 +1018,7 @@ input[type='number']:focus {
   border-radius: 0;
 }
 .rt-canvas-wrap:-webkit-full-screen .rt-fullscreen-btn { top: 14px; right: 14px; }
-.rt-canvas-wrap:-webkit-full-screen .rt-canvas-actions { top: 14px; left: 14px; }
+.rt-canvas-wrap:-webkit-full-screen .rt-canvas-actions { top: 14px; right: 54px; }
 .rt-canvas-wrap.has-staff:-webkit-full-screen .rt-canvas-actions,
 .rt-canvas-wrap.has-staff:-webkit-full-screen .rt-fullscreen-btn { top: calc(var(--staff-h) + 14px); }
 

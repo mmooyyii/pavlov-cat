@@ -35,15 +35,21 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
   let measureStart = 0;       // beat where the current measure begins
   let trim: number | null = null;   // start of the measure holding the first note
   const notes: TargetNote[] = [];
+  const bars: number[] = [];
+  let beatsPerBar: number | undefined;
 
   for (const measure of Array.from(part.querySelectorAll('measure'))) {
     measureStart = pos;
+    bars.push(pos);
     for (const el of Array.from(measure.children)) {
       switch (el.tagName) {
         case 'attributes': {
           const d = el.querySelector('divisions');
           const v = d ? parseInt(d.textContent ?? '', 10) : NaN;
           if (v > 0) divisions = v;
+          const beats = parseFloat(el.querySelector('time beats')?.textContent ?? '');
+          const type = parseFloat(el.querySelector('time beat-type')?.textContent ?? '');
+          if (beatsPerBar == null && beats > 0 && type > 0) beatsPerBar = beats * 4 / type;
           break;
         }
         case 'direction': {
@@ -95,5 +101,8 @@ export function parseMusicXml(xmlText: string, fallbackTitle: string): TargetTra
   for (const n of notes) n.startBeat -= lead;
   const title = (doc.querySelector('work-title,movement-title')?.textContent
     ?? fallbackTitle).trim() || fallbackTitle;
-  return { notes, totalBeats: pos - lead, title, bpm, offsetBeats: lead };
+  return {
+    notes, totalBeats: pos - lead, title, bpm, offsetBeats: lead,
+    bars: bars.filter(b => b >= lead).map(b => b - lead), beatsPerBar,
+  };
 }
