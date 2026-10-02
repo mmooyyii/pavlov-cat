@@ -619,12 +619,12 @@ input[type='number']:focus {
   background: #fff;
 }
 .rt-staff {
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  overflow: hidden;              /* the line slides by transform, not scrolling */
   padding: 6px 0 2px;
 }
-.rt-staff::-webkit-scrollbar { display: none; }
+/* Its own compositor layer: sliding it every frame moves pixels already
+   rasterized instead of repainting the engraving. */
+.rt-staff > * { will-change: transform; }
 /* Clef + key + time, pinned at the left once the line scrolls past them. */
 .rt-staff-head {
   position: absolute;

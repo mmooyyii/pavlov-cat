@@ -81,7 +81,14 @@ export class Staff {
     }
   }
 
+  private shift(transform: string): void {
+    for (const el of Array.from(this.host.children) as HTMLElement[]) {
+      if (el.style.transform !== transform) el.style.transform = transform;
+    }
+  }
+
   private layout(): void {
+    this.shift('');   // measure the line where it really is
     this.osmd!.render();
     this.stops = [];
     this.indexCursor();
@@ -102,11 +109,11 @@ export class Staff {
     this.host.querySelectorAll('svg, img').forEach(el => el.remove());
   }
 
-  /** x of the cursor in the line's own coordinates, independent of scrolling. */
+  /** x of the cursor in the line's own coordinates (measured unshifted). */
   private cursorX(): number {
     const el = this.osmd?.cursor.cursorElement;
     if (!el) return 0;
-    return el.getBoundingClientRect().left - this.host.getBoundingClientRect().left + this.host.scrollLeft;
+    return el.getBoundingClientRect().left - this.host.getBoundingClientRect().left;
   }
 
   // Walk the cursor once to learn where each stop falls in time and on the
@@ -127,7 +134,6 @@ export class Staff {
     c.reset();
     this.at = 0;
     this.shownStop = 0;
-    this.host.scrollLeft = 0;
   }
 
   // A copy of the line clipped to everything left of the first note: clef,
@@ -139,7 +145,7 @@ export class Staff {
     const box = this.host.parentElement!.getBoundingClientRect();
     const r = svg.getBoundingClientRect();
     const clone = svg.cloneNode(true) as SVGElement;
-    clone.style.left = `${r.left - box.left + this.host.scrollLeft}px`;
+    clone.style.left = `${r.left - box.left}px`;
     clone.style.top = `${r.top - box.top}px`;
     this.head.style.width = `${Math.max(0, first.x - 4)}px`;
     this.head.replaceChildren(clone);
@@ -161,19 +167,20 @@ export class Staff {
     // Continuous position: interpolate between this stop and the next, so the
     // line moves with the clock instead of hopping note to note.
     const a = stops[lo], b = stops[lo + 1];
-    let x = a.x;
-    if (b && beat > a.beat) x += (b.x - a.x) * Math.min(1, (beat - a.beat) / (b.beat - a.beat));
-    else if (b && beat < a.beat) x -= (a.beat - beat) * (b.x - a.x) / (b.beat - a.beat);   // lead-in: approach the first note
-    // Near the top the line would have to scroll left of 0 to put the note
-    // under the playhead; slide the content right instead.
+    // Before the first note and after the last there's no next stop: keep the
+    // pace of the nearest pair so the line never stalls while the clock runs.
+    const p = b ? a : stops[lo - 1];
+    const q = b ?? a;
+    const pxPerBeat = p && q !== p ? (q.x - p.x) / (q.beat - p.beat) : 0;
+    const x = b && beat >= a.beat ? a.x + (b.x - a.x) * Math.min(1, (beat - a.beat) / (b.beat - a.beat))
+      : a.x + (beat - a.beat) * pxPerBeat;
+    // Slide the whole line rather than scrolling the box: a scroll can't go
+    // before the start or past the end, so a short piece (narrower than the
+    // box) would never move and the opening notes couldn't reach the playhead.
     const left = x - anchorX;
-    const scroll = Math.max(0, left);
-    if (Math.abs(this.host.scrollLeft - scroll) > 0.5) this.host.scrollLeft = scroll;
-    const shift = left < 0 ? `translateX(${-left}px)` : '';
-    for (const el of Array.from(this.host.children) as HTMLElement[]) {
-      if (el.style.transform !== shift) el.style.transform = shift;
-    }
-    this.head.hidden = left < 1;
+    this.shift(`translateX(${(-left).toFixed(1)}px)`);
+    const hide = left < 1;
+    if (this.head.hidden !== hide) this.head.hidden = hide;
 
     if (lo === this.shownStop) return;
     this.shownStop = lo;

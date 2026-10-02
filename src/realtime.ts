@@ -96,16 +96,21 @@ function targetNoteAtBeat(beat: number): TargetNote | null {
   return i < 0 ? null : state.track!.notes[i];
 }
 
+// Binary search: notes are in time order and don't overlap (one voice), and
+// this runs per drawn sample — a linear scan was notes × samples every frame.
 function targetIndexAtBeat(beat: number): number {
   const track = state.track;
   if (!track) return -1;
   const b = beat - SCORE_LEADIN_BEATS;
-  if (b < 0) return -1;
   const notes = track.notes;
-  for (let i = 0; i < notes.length; i++) {
-    if (b >= notes[i].startBeat && b < notes[i].startBeat + notes[i].durBeat) return i;
+  if (b < 0 || !notes.length) return -1;
+  let lo = 0, hi = notes.length - 1;
+  while (lo < hi) {   // last note starting at or before b
+    const mid = (lo + hi + 1) >> 1;
+    if (notes[mid].startBeat <= b) lo = mid; else hi = mid - 1;
   }
-  return -1;
+  const n = notes[lo];
+  return b >= n.startBeat && b < n.startBeat + n.durBeat ? lo : -1;
 }
 
 const scoreModeActive = (): boolean => state.refMode === 'score' && state.track != null;
@@ -414,6 +419,27 @@ function histForEach(cb: (t: number, f: number, v: number) => void): void {
       const idx = (state.histHead + i) % HISTORY_SIZE;
       cb(state.histTime[idx], state.histFreq[idx], state.histVol[idx]);
     }
+  }
+}
+
+// Only the samples with t0 ≤ t ≤ t1. Timestamps never go backwards within a
+// buffer (the transport clock only stands still), so the start is found by
+// binary search — the frame loop must not walk an hour of history to draw the
+// last few seconds.
+function histForEachIn(t0: number, t1: number, cb: (t: number, f: number, v: number) => void): void {
+  const n = state.histCount;
+  const full = n >= HISTORY_SIZE;
+  const at = (i: number): number => (full ? (state.histHead + i) % HISTORY_SIZE : i);
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (state.histTime[at(mid)] < t0) lo = mid + 1; else hi = mid;
+  }
+  for (let i = lo; i < n; i++) {
+    const idx = at(i);
+    const t = state.histTime[idx];
+    if (t > t1) break;
+    cb(t, state.histFreq[idx], state.histVol[idx]);
   }
 }
 
@@ -1669,8 +1695,7 @@ function drawOnce(): void {
 
   const dotR = 1.8 * scale;
   const pts: { ts: number; x: number; y: number; m: number; beat: number }[] = [];
-  histForEach((ts, f, v) => {
-    if (ts < visibleStartT || ts > visibleEndT) return;
+  histForEachIn(visibleStartT, visibleEndT, (ts, f, v) => {
     const beat = (ts - state.startTime) / secsPerBeat;
     const x = beatToX(beat);
     if (x < leftMargin || x > W) return;
@@ -2915,7 +2940,11 @@ function resizeCanvas(): void {
   if (c.clientWidth <= 0 || c.clientHeight <= 0) return;   // hidden (tuner tab) — keep the last size
   // Device pixels, capped at 2× — a 3× bitmap redrawn every frame is too
   // much for a mid-range tablet, and 2× is already sharp at arm's length.
-  state.dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  // Also cap the total: a fullscreen canvas at 2× is millions of pixels
+  // repainted 60 times a second.
+  const MAX_PIXELS = 2_000_000;
+  const fit = Math.sqrt(MAX_PIXELS / (c.clientWidth * c.clientHeight));
+  state.dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1, fit));
   const w = Math.round(c.clientWidth * state.dpr);
   const h = Math.round(c.clientHeight * state.dpr);
   if (c.width !== w || c.height !== h) {
