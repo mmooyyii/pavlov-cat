@@ -6,7 +6,7 @@ import {
   type TargetNote, type TargetTrack,
 } from './music';
 import { Drone, type DroneMode } from './drone';
-import { analyze, analyzeRhythm, type CentsEntry, type Report } from './report';
+import { analyze, analyzeRhythm, analyzeNotes, type Frame, type NoteAnalysis, type Report, type RhythmReport } from './report';
 import { parseMusicXml } from './musicxml';
 import { scoresAll, scoresPut, scoresReplace, scoresDelete, type ScoreEntry } from './library';
 import { readMxl } from './mxl';
@@ -90,14 +90,20 @@ function tonicDroneMidi(): number {
 // Which score note (if any) the playhead beat falls inside. Beats include the
 // lead-in offset, so score beat = elapsed beat − lead-in.
 function targetNoteAtBeat(beat: number): TargetNote | null {
+  const i = targetIndexAtBeat(beat);
+  return i < 0 ? null : state.track!.notes[i];
+}
+
+function targetIndexAtBeat(beat: number): number {
   const track = state.track;
-  if (!track) return null;
+  if (!track) return -1;
   const b = beat - SCORE_LEADIN_BEATS;
-  if (b < 0) return null;
-  for (const n of track.notes) {
-    if (b >= n.startBeat && b < n.startBeat + n.durBeat) return n;
+  if (b < 0) return -1;
+  const notes = track.notes;
+  for (let i = 0; i < notes.length; i++) {
+    if (b >= notes[i].startBeat && b < notes[i].startBeat + notes[i].durBeat) return i;
   }
-  return null;
+  return -1;
 }
 
 const scoreModeActive = (): boolean => state.refMode === 'score' && state.track != null;
@@ -190,6 +196,7 @@ const state = {
   recStartedAt: 0,                      // performance.now() when the current segment began (0 = not running)
   recElapsed: 0,                        // seconds captured so far, excluding paused time
   takes: [] as Take[],                  // this session's recordings, newest first
+  nextAction: null as null | (() => void),   // the report's suggested next step
 
   // Mic latency (s) between a note sounding and being detected — for rhythm.
   micLatency: 0,
@@ -1449,6 +1456,7 @@ function drawOnce(): void {
   const volYs: number[] = [];
 
   const dotR = 1.8 * scale;
+  const pts: { ts: number; x: number; y: number; m: number; beat: number }[] = [];
   histForEach((ts, f, v) => {
     if (ts < visibleStartT || ts > visibleEndT) return;
     const beat = (ts - state.startTime) / secsPerBeat;
@@ -1462,11 +1470,31 @@ function drawOnce(): void {
     if (f <= 0) return;
     const m = freqToMidi(f);
     if (m < mMin || m > mMax) return;
-    const y = midiToY(m);
-    const p = buckets[pickBucket(f, beat)].path;
-    p.moveTo(x + dotR, y);
-    p.arc(x, y, dotR, 0, Math.PI * 2);
+    pts.push({ ts, x, y: midiToY(m), m, beat });
   });
+
+  // Colour by the pitch the ear hears: the mean over about one vibrato cycle
+  // (±JUDGE_WIN_S) of the same held note. A dot still sits where it was sung,
+  // but a well-centred vibrato no longer flickers red at its troughs. The
+  // window stops at a dropout or a jump to another note.
+  const JUDGE_WIN_S = 0.1;
+  for (let i = 0; i < pts.length; i++) {
+    const p0 = pts[i];
+    let sum = p0.m, n = 1;
+    for (let j = i - 1; j >= 0; j--) {
+      const q = pts[j], nb = pts[j + 1];
+      if (p0.ts - q.ts > JUDGE_WIN_S || nb.ts - q.ts > 0.06 || Math.abs(q.m - nb.m) > 0.8) break;
+      sum += q.m; n++;
+    }
+    for (let j = i + 1; j < pts.length; j++) {
+      const q = pts[j], pb = pts[j - 1];
+      if (q.ts - p0.ts > JUDGE_WIN_S || q.ts - pb.ts > 0.06 || Math.abs(q.m - pb.m) > 0.8) break;
+      sum += q.m; n++;
+    }
+    const p = buckets[pickBucket(midiToFreq(sum / n), p0.beat)].path;
+    p.moveTo(p0.x + dotR, p0.y);
+    p.arc(p0.x, p0.y, dotR, 0, Math.PI * 2);
+  }
 
   if (volXs.length >= 2) {
     ctx2d.beginPath();
@@ -1559,39 +1587,52 @@ function updateStartBtn(): void {
 
 // ── Practice report ──────────────────────────────────────────────────────────
 // Walk the recorded history, snap each voiced frame to its nearest target note,
-// and hand the (name, cents) list to the analyzer. Frames more than ~150¢ from
-// any target are dropped as transitions/noise rather than counted as a note.
-function computeReport(): Report | null {
-  const entries: CentsEntry[] = [];
+// and hand the frames to the analyzer. Frames more than ~150¢ from any target
+// are dropped as transitions/noise rather than counted as a note. Each frame
+// carries which target it was judged against, so the analyzer can regroup them
+// into held notes (vibrato centre, attack).
+interface SessionReport {
+  report: Report;
+  notes: NoteAnalysis;
+  midiOf: Map<string, number>;   // note name → midi, for acting on a worst note
+}
+
+function computeReport(): SessionReport | null {
+  const frames: Frame[] = [];
+  const midiOf = new Map<string, number>();
   if (scoreModeActive()) {
     // Judge each frame against the score note under its beat.
     const spb = 60 / state.bpm;
+    const notes = state.track!.notes;
     histForEach((ts, f) => {
       if (f <= 0) return;
-      const beat = (ts - state.startTime) / spb;
-      const tn = targetNoteAtBeat(beat);
-      if (!tn) return;
+      const i = targetIndexAtBeat((ts - state.startTime) / spb);
+      if (i < 0) return;
+      const tn = notes[i];
       const c = 1200 * Math.log2(f / midiToFreq(tn.midi));
       if (Math.abs(c) > 150) return;
-      entries.push({ name: tn.name, cents: Math.round(c) });
+      midiOf.set(tn.name, tn.midi);
+      frames.push({ t: ts, note: i, name: tn.name, cents: Math.round(c) });
     });
   } else {
     const targets = state.rangeNotes.filter(n => n.target);
     if (!targets.length) return null;
-    histForEach((_ts, f) => {
+    histForEach((ts, f) => {
       if (f <= 0) return;
-      let bestAbs = Infinity, bestSigned = 0, bestName = '';
-      for (const t of targets) {
-        const c = 1200 * Math.log2(f / t.frequency);
+      let bestAbs = Infinity, bestSigned = 0, best = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const c = 1200 * Math.log2(f / targets[i].frequency);
         const a = Math.abs(c);
-        if (a < bestAbs) { bestAbs = a; bestSigned = c; bestName = t.name; }
+        if (a < bestAbs) { bestAbs = a; bestSigned = c; best = i; }
       }
       if (bestAbs > 150) return;
-      entries.push({ name: bestName, cents: Math.round(bestSigned) });
+      midiOf.set(targets[best].name, targets[best].midi);
+      frames.push({ t: ts, note: best, name: targets[best].name, cents: Math.round(bestSigned) });
     });
   }
-  if (entries.length < 20) return null; // not enough to say anything useful
-  return analyze(entries, state.centsToleranceGood, state.centsToleranceMed);
+  if (frames.length < 20) return null; // not enough to say anything useful
+  const notes = analyzeNotes(frames, state.centsToleranceMed);
+  return { report: analyze(notes.entries, state.centsToleranceGood, state.centsToleranceMed), notes, midiOf };
 }
 
 // Approximate rhythm timing. Detect note onsets (note-change transitions above
@@ -1646,8 +1687,9 @@ function hideReport(): void {
 function showReport(): void {
   const el = state.els?.reportEl;
   if (!el) return;
-  const r = computeReport();
-  if (!r) { hideReport(); return; }
+  const sr = computeReport();
+  if (!sr) { hideReport(); return; }
+  const r = sr.report;
 
   const round = (n: number): string => `${n < 0 ? '−' : ''}${Math.abs(Math.round(n))}`;
   let tendency = '';
@@ -1664,15 +1706,43 @@ function showReport(): void {
   }
 
   const rh = computeRhythm();
+  const r2 = rh ? analyzeRhythm(rh.errorsMs, rh.onTimeMs) : null;
   let rhythmHtml = '';
-  if (rh) {
-    const r2 = analyzeRhythm(rh.errorsMs, rh.onTimeMs);
+  if (r2) {
     const tend = r2.tendencyMs > 20 ? t('rep.late', { ms: Math.round(r2.tendencyMs) })
       : r2.tendencyMs < -20 ? t('rep.early', { ms: Math.round(-r2.tendencyMs) }) : t('rep.onTime');
     const cal = state.micLatency > 0 ? '' : ` <span class="report-hint">${t('rep.uncalibrated')}</span>`;
     const line = t('rep.rhythm', { pct: Math.round(r2.onTimePct), ms: Math.round(r2.meanAbsMs), tend });
     rhythmHtml = `<div class="report-rhythm">${line}${cal}</div>`;
   }
+
+  // Attack and vibrato: one line each, only when there were enough notes.
+  const lines: string[] = [];
+  const on = sr.notes.onset;
+  if (on && on.notes >= 3) {
+    let slide = '';
+    if (on.slideCents <= -5) slide = ` · ${t('rep.slideUp', { c: Math.round(-on.slideCents) })}`;
+    else if (on.slideCents >= 5) slide = ` · ${t('rep.slideDown', { c: Math.round(on.slideCents) })}`;
+    lines.push(t('rep.onset', { pct: Math.round(on.inTunePct), n: on.notes }) + slide);
+  }
+  const vib = sr.notes.vibrato;
+  if (vib) {
+    const tags: string[] = [];
+    if (vib.rateHz < 4.5) tags.push(t('rep.vibSlow'));
+    else if (vib.rateHz > 7.5) tags.push(t('rep.vibFast'));
+    if (vib.widthCents > 30) tags.push(t('rep.vibWide'));
+    const tag = tags.length ? ` · ${tags.join(t('lib.listSep'))}` : '';
+    lines.push(t('rep.vibrato', { n: vib.notes, hz: vib.rateHz.toFixed(1), w: Math.round(vib.widthCents) }) + tag);
+  }
+  const notesHtml = lines.map(l => `<div class="report-rhythm">${l}</div>`).join('');
+
+  const next = nextStep(sr, r2);
+  state.nextAction = next?.run ?? null;
+  const nextHtml = next
+    ? `<div class="report-next"><span>${next.text}</span>` +
+      (next.run ? `<button class="rt-mini-btn" type="button" data-next>${escapeHtml(next.label!)}</button>` : '') +
+      '</div>'
+    : '';
 
   el.innerHTML = `
     <div class="report-head">
@@ -1681,8 +1751,94 @@ function showReport(): void {
       ${tendency}
     </div>
     ${rhythmHtml}
-    ${worst}`;
+    ${notesHtml}
+    ${worst}
+    ${nextHtml}`;
   el.classList.remove('hidden');
+}
+
+// ── Next step ────────────────────────────────────────────────────────────────
+// One concrete thing to do with the next run-through, picked from the
+// report's biggest problem, plus a button that sets it up. Order matters: a
+// shaky pulse or groping attacks make every pitch number noisy, so those come
+// before intonation; a clean run earns a faster tempo.
+interface NextStep {
+  text: string;
+  label?: string;
+  run?: () => void;
+}
+
+function setBpm(v: number): void {
+  state.bpm = Math.max(40, Math.min(220, Math.round(v)));
+  if (state.els) state.els.bpmInput.value = String(state.bpm);
+  saveSettings();
+}
+
+function setMetronome(on: boolean): void {
+  state.metronomeOn = on;
+  state.els?.metronomeToggles.forEach(b => b.classList.toggle('active', (b.dataset.value === 'on') === on));
+  saveSettings();
+}
+
+function setDrone(mode: DroneMode, rootMidi?: number): void {
+  state.droneMode = mode;
+  if (rootMidi != null) {
+    state.droneRootMidi = rootMidi;
+    if (state.els) state.els.droneRootSelect.value = String(rootMidi);
+  }
+  state.els?.droneToggles.forEach(b => b.classList.toggle('active', b.dataset.value === mode));
+  saveSettings();
+  void applyDrone();
+}
+
+function nextStep(sr: SessionReport, rh: RhythmReport | null): NextStep | null {
+  const r = sr.report;
+  const on = sr.notes.onset;
+  const slower = Math.max(40, Math.round(state.bpm * 0.85));
+
+  if (rh && rh.onsets >= 6 && rh.onTimePct < 60 && state.bpm > 40) {
+    return {
+      text: t('next.rhythm', { bpm: slower }),
+      label: t('next.rhythmBtn', { bpm: slower }),
+      run: () => { setBpm(slower); setMetronome(true); void redo(); },
+    };
+  }
+  if (on && on.notes >= 5 && on.inTunePct < 60) {
+    return {
+      text: t('next.onset', { bpm: slower }),
+      label: t('next.slowerBtn', { bpm: slower }),
+      run: () => { setBpm(slower); void redo(); },
+    };
+  }
+  if (Math.abs(r.tendency) > state.centsToleranceGood) {
+    const root = state.refMode === 'scale' ? tonicDroneMidi() : undefined;
+    return {
+      text: t(r.tendency > 0 ? 'next.tendHigh' : 'next.tendLow'),
+      label: t('next.droneBtn'),
+      run: () => { setDrone('fifth', root); void redo(); },
+    };
+  }
+  const w = r.worst[0];
+  const wm = w ? sr.midiOf.get(w.name) : undefined;
+  if (w && wm != null) {
+    // A low, comfortable octave of that note for the drone (G3..F#4).
+    let m = wm;
+    while (m - 12 >= PICKER_MIN_MIDI) m -= 12;
+    return {
+      text: t('next.note', { name: w.name }),
+      label: t('next.noteBtn', { name: midiToNoteName(m) }),
+      run: () => { setDrone('root', m); },
+    };
+  }
+  if (r.score >= 85 && (!rh || rh.onTimePct >= 75) && state.bpm < 220) {
+    const faster = Math.min(220, Math.round(state.bpm * 1.08));
+    return {
+      text: t('next.faster', { bpm: faster }),
+      label: t('next.fasterBtn', { bpm: faster }),
+      run: () => { setBpm(faster); void redo(); },
+    };
+  }
+  return null;
 }
 
 // ── Tuner view ───────────────────────────────────────────────────────────────
@@ -2170,6 +2326,11 @@ export function initRealtime(): void {
       const on = btn.dataset.value === 'on';
       if (on !== state.recordArmed) setRecordArmed(on);
     });
+  });
+
+  // The report's "next step" button.
+  state.els.reportEl.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('[data-next]')) state.nextAction?.();
   });
 
   // Takes list: download / delete one, or clear them all.

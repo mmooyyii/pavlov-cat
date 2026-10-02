@@ -793,6 +793,19 @@ input[type='number']:focus {
 .report-worst b { color: var(--accent); font-weight: 600; }
 .report-good { font-size: 14px; color: var(--green); font-weight: 600; }
 
+.report-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--separator);
+  font-size: 14px;
+  color: var(--label);
+}
+.report-next b { color: var(--accent); font-weight: 600; }
+
 /* ── Tuner ───────────────────────────────────────────────────────────────── */
 .tuner-card {
   max-width: 480px;
