@@ -56,8 +56,6 @@ interface Take {
   seconds: number;
 }
 
-// One bar of metronome runway before the first score note reaches the playhead.
-const SCORE_LEADIN_BEATS = 4;
 
 function currentKey(): Key {
   const k = COMMON_KEYS[state.keyIndex] ?? COMMON_KEYS[0];
@@ -89,8 +87,8 @@ function tonicDroneMidi(): number {
   return k.tonicPc + 48; // C3..B3
 }
 
-// Which score note (if any) the playhead beat falls inside. Beats include the
-// lead-in offset, so score beat = elapsed beat − lead-in.
+// Which score note (if any) the playhead beat falls inside. The timeline and
+// the score share beat 0 — the count-in, not empty bars, leads you in.
 function targetNoteAtBeat(beat: number): TargetNote | null {
   const i = targetIndexAtBeat(beat);
   return i < 0 ? null : state.track!.notes[i];
@@ -98,10 +96,9 @@ function targetNoteAtBeat(beat: number): TargetNote | null {
 
 // Binary search: notes are in time order and don't overlap (one voice), and
 // this runs per drawn sample — a linear scan was notes × samples every frame.
-function targetIndexAtBeat(beat: number): number {
+function targetIndexAtBeat(b: number): number {
   const track = state.track;
   if (!track) return -1;
-  const b = beat - SCORE_LEADIN_BEATS;
   const notes = track.notes;
   if (b < 0 || !notes.length) return -1;
   let lo = 0, hi = notes.length - 1;
@@ -190,7 +187,7 @@ const state = {
   staff: null as Staff | null,          // engraved score above the timeline
   staffXml: null as string | null,      // what the staff currently shows
   staffShown: false,
-  staffOffset: 0,                       // trimmed lead-in beats: timeline → written score
+  staffOffset: 0,                       // trimmed opening rest beats: timeline → written score
 
   // Reference drone (sustained tone to tune against)
   drone: null as Drone | null,
@@ -482,11 +479,11 @@ const WAIT_EARLY_BEATS = 1;         // a note can be "caught" up to a beat early
 
 const waitActive = (): boolean => state.waitMode && scoreModeActive();
 
-/** Beat (timeline, incl. lead-in) the playhead may not pass, or null. */
+/** Beat the playhead may not pass, or null. */
 function waitHoldBeat(): number | null {
   if (!waitActive()) return null;
   const n = state.track!.notes[state.waitIdx];
-  return n ? n.startBeat + SCORE_LEADIN_BEATS : null;
+  return n ? n.startBeat : null;
 }
 
 // Point waitIdx at the first note not yet behind the given timeline beat —
@@ -494,8 +491,7 @@ function waitHoldBeat(): number | null {
 function syncWait(beat: number): void {
   state.waitRun = 0;
   if (!state.track) { state.waitIdx = 0; return; }
-  const b = beat - SCORE_LEADIN_BEATS;
-  const i = state.track.notes.findIndex(n => n.startBeat >= b - 1e-6);
+  const i = state.track.notes.findIndex(n => n.startBeat >= beat - 1e-6);
   state.waitIdx = i < 0 ? state.track.notes.length : i;
 }
 
@@ -506,7 +502,7 @@ function waitStep(f: number): void {
   if (!n) return;
   const ok = f > 0 && Math.abs(1200 * Math.log2(f / midiToFreq(n.midi))) <= state.centsToleranceMed;
   state.waitRun = ok ? state.waitRun + 1 : 0;
-  const sb = rawBeat() - SCORE_LEADIN_BEATS;
+  const sb = rawBeat();
   const prev = notes[state.waitIdx - 1];
   const open = Math.max(prev ? prev.startBeat : -Infinity, n.startBeat - WAIT_EARLY_BEATS);
   if (state.waitRun >= WAIT_HIT_FRAMES && sb >= open) {
@@ -517,7 +513,7 @@ function waitStep(f: number): void {
   // Not played yet and the clock has reached it: stop the transport here.
   if (sb > n.startBeat) {
     const spb = 60 / state.bpm;
-    state.heldTotal = state.ctx.currentTime - state.startTime - (n.startBeat + SCORE_LEADIN_BEATS) * spb;
+    state.heldTotal = state.ctx.currentTime - state.startTime - n.startBeat * spb;
   }
 }
 
@@ -532,18 +528,17 @@ function barLength(): number {
   return tr?.bars?.length && tr.beatsPerBar ? tr.beatsPerBar : state.accentEvery;
 }
 
-/** Is timeline beat `b` (lead-in included) the first beat of a bar? */
+/** Is beat `b` the first beat of a bar? */
 function isBarStart(b: number): boolean {
   const tr = scoreModeActive() ? state.track : null;
   if (!tr?.bars?.length) return b % state.accentEvery === 0;
-  const s = b - SCORE_LEADIN_BEATS;
-  if (s < 0) {   // lead-in / count-in: whole bars counted back from the first one
+  if (b < 0) {   // count-in: whole bars counted back from the first one
     const per = barLength();
-    return Math.abs(((s % per) + per) % per) < 1e-6;
+    return Math.abs(((b % per) + per) % per) < 1e-6;
   }
   let set = barSets.get(tr);
   if (!set) { set = new Set(tr.bars.map(beatKey)); barSets.set(tr, set); }
-  return set.has(beatKey(s));
+  return set.has(beatKey(b));
 }
 
 // ── Metronome ──────────────────────────────────────────────────────────────
@@ -1499,7 +1494,7 @@ function drawOnce(): void {
   // The staff's cursor lines up with the playhead, so the eye can drop
   // straight from the written note to the pitch trace below it.
   if (state.staffShown && state.track) {
-    state.staff?.follow(elapsedBeats - SCORE_LEADIN_BEATS + state.staffOffset, playheadX / dpr);
+    state.staff?.follow(elapsedBeats + state.staffOffset, playheadX / dpr);
   }
 
   const topY = Math.round(24 * scale);
@@ -1612,13 +1607,12 @@ function drawOnce(): void {
     ctx2d.textAlign = 'left';
     ctx2d.textBaseline = 'middle';
     ctx2d.font = `${fontSm}px system-ui, sans-serif`;
-    const scoreBeat = elapsedBeats - SCORE_LEADIN_BEATS;
     for (const n of state.track!.notes) {
-      const x0 = beatToX(n.startBeat + SCORE_LEADIN_BEATS);
-      const x1 = beatToX(n.startBeat + n.durBeat + SCORE_LEADIN_BEATS);
+      const x0 = beatToX(n.startBeat);
+      const x1 = beatToX(n.startBeat + n.durBeat);
       if (x1 < leftMargin || x0 > W) continue;
       const y = midiToY(n.midi);
-      const now = scoreBeat >= n.startBeat && scoreBeat < n.startBeat + n.durBeat;
+      const now = elapsedBeats >= n.startBeat && elapsedBeats < n.startBeat + n.durBeat;
       const left = Math.max(leftMargin, x0);
       const w = Math.max(2, Math.min(W, x1) - left - 1);
       ctx2d.fillStyle = now ? PALETTE.scoreBlockNow : PALETTE.scoreBlock;
@@ -1667,7 +1661,7 @@ function drawOnce(): void {
     absCents <= state.centsToleranceGood ? 0 : absCents <= state.centsToleranceMed ? 1 : 2;
 
   // Colour a sample. Score mode judges against the note under that sample's
-  // beat (neutral during rests / lead-in); otherwise against the nearest of the
+  // beat (neutral during rests / count-in); otherwise against the nearest of the
   // static reference frequencies.
   const pickBucket = (f: number, beat: number): number => {
     if (!state.pitchJudge) return 3;
@@ -1897,7 +1891,7 @@ function computeRhythm(): { errorsMs: number[]; onTimeMs: number } | null {
 
   const expected: number[] = [];
   if (scoreMode && state.track) {
-    for (const n of state.track.notes) expected.push((n.startBeat + SCORE_LEADIN_BEATS) * spb);
+    for (const n of state.track.notes) expected.push(n.startBeat * spb);
   }
 
   const errorsMs: number[] = [];
