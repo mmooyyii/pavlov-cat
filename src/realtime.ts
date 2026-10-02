@@ -10,6 +10,7 @@ import { analyze, analyzeRhythm, analyzeNotes, type Frame, type NoteAnalysis, ty
 import { parseMusicXml } from './musicxml';
 import { scoresAll, scoresPut, scoresReplace, scoresDelete, type ScoreEntry } from './library';
 import { readMxl } from './mxl';
+import { sampleEntries, SAMPLE_DIR } from './samples';
 import { t, applyI18n, onLangChange, setLang, getLang, LANGS, type Lang, type MsgKey } from './i18n';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -706,6 +707,23 @@ function escapeAttr(s: string): string {
   return escapeHtml(s).replace(/"/g, '&quot;');
 }
 
+// Built-in samples sit in front of whatever the user imported. They're rebuilt
+// on a language switch, since their titles are localized.
+let samples: ScoreEntry[] = [];
+
+async function withSamples(): Promise<ScoreEntry[]> {
+  return [...samples, ...await scoresAll()];
+}
+
+function refreshSamples(): void {
+  samples = sampleEntries();
+  state.library = [...samples, ...state.library.filter(e => !e.builtin)];
+  const active = samples.find(e => e.id === state.scoreId);
+  if (active) state.track = active.track!;
+}
+
+const scoreLabel = (e: ScoreEntry): string => e.builtin ? `⭐ ${e.title}` : e.title;
+
 // ── Library browser: the folder tree ─────────────────────────────────────────
 // Entry ids are folder-relative paths, so the tree the user picked on disk can
 // be rebuilt verbatim — practice folders ("音阶/", "巴赫/") stay meaningful
@@ -746,14 +764,16 @@ function treeRoots(root: DirNode): DirNode {
 
 function renderDir(node: DirNode, depth: number): string {
   const out: string[] = [];
-  const dirs = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  // The samples folder always comes first.
+  const dirs = [...node.dirs.values()].sort((a, b) =>
+    Number(b.path === SAMPLE_DIR) - Number(a.path === SAMPLE_DIR) || a.name.localeCompare(b.name, 'zh'));
   for (const d of dirs) {
     const open = !state.collapsedDirs.has(d.path);
     const count = countFiles(d);
     out.push(
       `<div class="tree-row tree-dir" data-dir="${escapeAttr(d.path)}" style="--depth:${depth}">` +
         `<span class="tree-caret${open ? ' open' : ''}">▸</span>` +
-        `<span class="tree-name">${escapeHtml(d.name)}</span>` +
+        `<span class="tree-name">${escapeHtml(d.path === SAMPLE_DIR ? t('lib.samples') : d.name)}</span>` +
         `<span class="tree-count">${count}</span>` +
       `</div>`,
     );
@@ -763,9 +783,9 @@ function renderDir(node: DirNode, depth: number): string {
     const active = f.id === state.scoreId;
     out.push(
       `<div class="tree-row tree-file${active ? ' active' : ''}" data-id="${escapeAttr(f.id)}" style="--depth:${depth}" title="${escapeAttr(f.id)}">` +
-        `<span class="tree-name">${escapeHtml(f.title)}</span>` +
+        `<span class="tree-name">${escapeHtml(scoreLabel(f))}</span>` +
         `<span class="tree-count">${f.track ? t('lib.noteCount', { n: f.track.notes.length }) : ''}</span>` +
-        `<button class="tree-del" type="button" data-del="${escapeAttr(f.id)}" title="${escapeAttr(t('lib.remove'))}" aria-label="${escapeAttr(t('lib.removeAria', { title: f.title }))}">✕</button>` +
+        (f.builtin ? '' : `<button class="tree-del" type="button" data-del="${escapeAttr(f.id)}" title="${escapeAttr(t('lib.remove'))}" aria-label="${escapeAttr(t('lib.removeAria', { title: f.title }))}">✕</button>`) +
       `</div>`,
     );
   }
@@ -782,7 +802,7 @@ function refreshScoreUi(): void {
   if (!state.els) return;
   const active = state.library.find(e => e.id === state.scoreId) ?? null;
   state.els.scoreName.textContent = active
-    ? active.title
+    ? scoreLabel(active)
     : state.library.length ? t('lib.pick') : t('lib.empty');
   state.els.scoreBtn.classList.toggle('placeholder', !active);
 
@@ -861,7 +881,7 @@ async function loadTrack(entry: ScoreEntry): Promise<boolean> {
   entry.title = entry.track.title;
   try {
     await scoresPut([entry]);
-    state.library = await scoresAll();   // the real title may sort differently
+    state.library = await withSamples();   // the real title may sort differently
   } catch { /* cache is best-effort: the piece still plays this session */ }
   return true;
 }
@@ -900,7 +920,7 @@ async function pickScoreFolder(): Promise<void> {
   const del = state.library.filter(e => e.id.startsWith(`${dir.name}/`) && !fresh.has(e.id)).map(e => e.id);
   try {
     await scoresReplace(put, del);
-    state.library = await scoresAll();
+    state.library = await withSamples();
   } catch (e) {
     setStatus(e instanceof Error ? e.message : t('lib.writeFailed'));
     return;
@@ -950,7 +970,7 @@ async function importScoreFiles(files: readonly File[]): Promise<void> {
 
   try {
     await scoresPut(entries);
-    state.library = await scoresAll();
+    state.library = await withSamples();
   } catch (e) {
     setStatus(e instanceof Error ? e.message : t('lib.writeFailed'));
     return;
@@ -969,7 +989,7 @@ async function removeScore(id: string): Promise<void> {
   const gone = state.library.find(e => e.id === id);
   try {
     await scoresDelete(id);
-    state.library = await scoresAll();
+    state.library = await withSamples();
   } catch {
     setStatus(t('lib.deleteFailed'));
     return;
@@ -983,6 +1003,7 @@ async function removeScore(id: string): Promise<void> {
 // Load the library at boot, migrating the single score older versions kept in
 // localStorage so an upgrading user doesn't lose the piece they were on.
 async function initLibrary(): Promise<void> {
+  samples = sampleEntries();
   let legacy: ScoreEntry | null = null;
   try {
     const raw = localStorage.getItem(LEGACY_SCORE_KEY);
@@ -996,9 +1017,9 @@ async function initLibrary(): Promise<void> {
 
   try {
     if (legacy) await scoresPut([legacy]);
-    state.library = await scoresAll();
+    state.library = await withSamples();
   } catch {
-    return;   // private mode / blocked IndexedDB — score mode stays empty
+    state.library = [...samples];   // private mode / blocked IndexedDB — samples only
   }
   if (legacy) { try { localStorage.removeItem(LEGACY_SCORE_KEY); } catch { /* */ } }
 
@@ -1999,6 +2020,7 @@ function renderKeyOptions(): void {
 function onLanguageChanged(): void {
   if (!state.els) return;
   renderKeyOptions();
+  refreshSamples();
   refreshScoreUi();
   refreshTakes();
   updateStartBtn();

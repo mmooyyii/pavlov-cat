@@ -30,6 +30,7 @@ const zh = {
 
   // score library
   'lib.title': '曲库',
+  'lib.samples': '示例',
   'lib.dirBtn': '📁 文件夹',
   'lib.dirTitle': '选一个装乐谱的文件夹,里面的 .musicxml / .mxl 连同子文件夹都会列进曲库,点到哪首才读哪首。再选一次同一个文件夹可以刷新。安卓上若点了没反应,改用右边「选文件」多选。',
   'lib.scanning': '正在读取目录…',
@@ -240,6 +241,7 @@ const en: Record<MsgKey, string> = {
   'drone.fifth': 'Tonic + 5th',
 
   'lib.title': 'Library',
+  'lib.samples': 'Samples',
   'lib.dirBtn': '📁 Folder',
   'lib.dirTitle': 'Pick a folder of scores: every .musicxml / .mxl inside, subfolders included, is listed in the library and read only when you open it. Pick the same folder again to refresh. If nothing happens on Android, use "Files" on the right instead.',
   'lib.scanning': 'Reading folder…',

@@ -13,6 +13,8 @@ export interface ScoreEntry {
   title: string;
   track?: TargetTrack;               // absent until a lazily indexed score is first opened
   handle?: FileSystemFileHandle;     // where to read it from, for folder-indexed scores
+  xml?: string;                      // source MusicXML, kept for drawing the staff
+  builtin?: boolean;                 // shipped sample — not in IndexedDB, not deletable
   addedAt: number;
 }
 
