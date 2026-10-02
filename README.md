@@ -51,3 +51,7 @@ npm run build
 ```
 
 TypeScript + Vite, no framework. Mic access needs https or localhost.
+
+## License
+
+[MIT](LICENSE)

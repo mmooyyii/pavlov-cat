@@ -51,3 +51,7 @@ npm run build
 ```
 
 TypeScript + Vite，没有用前端框架。麦克风需要在 https 或 localhost 下才能用。
+
+## 许可证
+
+[MIT](LICENSE)

@@ -12,6 +12,7 @@
     "vite": "^8.0.13"
   },
   "private": true,
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "opensheetmusicdisplay": "^2.1.3",
